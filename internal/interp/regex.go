@@ -82,10 +82,6 @@ func makeRegexpLiteral(text string) *Regexp {
 	return newRegexp(b.String(), false)
 }
 
-// group wraps a pattern in a capturing group, as upstream does with its "()"
-// wrapping when combining regexps.
-func group(p string) string { return "(" + p + ")" }
-
 func regexpConcatN(rs []*Regexp) *Regexp {
 	present := present(rs)
 	if len(present) == 0 {
@@ -283,14 +279,6 @@ func (r *Regexp) match(text string, start, end int) ([]int, bool, error) {
 		}
 	}
 	return regs, true, nil
-}
-
-// matchesEmpty reports whether the regexp matches the empty string.
-func (r *Regexp) matchesEmpty() bool {
-	if err := r.build(); err != nil {
-		return false
-	}
-	return r.compiled.MatchString("")
 }
 
 // String renders the pattern for diagnostics.

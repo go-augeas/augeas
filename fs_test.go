@@ -89,3 +89,41 @@ func nodeVal(n *Node) string {
 	}
 	return *n.Value
 }
+
+func TestOSFS(t *testing.T) {
+	dir := t.TempDir()
+	f := dir + "/x.conf"
+	var o osFS
+	if err := o.WriteFile(f, []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := o.ReadFile(f); err != nil || string(b) != "a\n" {
+		t.Fatalf("read %q %v", b, err)
+	}
+	if m, err := o.Glob(dir + "/*.conf"); err != nil || len(m) != 1 {
+		t.Fatalf("glob %v %v", m, err)
+	}
+}
+
+func TestLoadRecordsError(t *testing.T) {
+	a := New()
+	a.SetFileSystem(fakeFS{files: map[string]string{"/etc/demo": "x\n"}})
+	// a lens whose Parse always errors
+	if err := a.Load(errLens{}, "*demo", "/files"); err != nil {
+		t.Fatalf("Load returns nil even on per-file error: %v", err)
+	}
+	if v, _ := a.Get("/augeas/files/demo/error"); v == "" {
+		t.Fatal("expected recorded error")
+	}
+}
+
+type errLens struct{}
+
+func (errLens) Parse(string) (*Node, error) { return nil, errParse }
+func (errLens) Build(*Node) (string, error) { return "", errParse }
+
+var errParse = fsErr("boom")
+
+type fsErr string
+
+func (e fsErr) Error() string { return string(e) }

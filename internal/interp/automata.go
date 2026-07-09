@@ -42,21 +42,6 @@ func newAlphabet(res ...*syntax.Regexp) *alphabet {
 
 func (a *alphabet) nsym() int { return len(a.cuts) - 1 }
 
-// sym returns the symbol index containing byte value b.
-func (a *alphabet) sym(b int) int {
-	// find largest cut <= b
-	lo, hi := 0, len(a.cuts)-1
-	for lo < hi {
-		mid := (lo + hi + 1) / 2
-		if a.cuts[mid] <= b {
-			lo = mid
-		} else {
-			hi = mid - 1
-		}
-	}
-	return lo
-}
-
 // symsForRange returns the symbol indices fully inside [lo,hi] (clamped to
 // 0..255).
 func (a *alphabet) symsForRange(lo, hi int) []int {
