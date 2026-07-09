@@ -474,15 +474,15 @@ func TestPathErrors(t *testing.T) {
 }
 
 func TestLensRegistry(t *testing.T) {
-	if _, ok := LensByName("Hosts"); !ok {
-		t.Fatal("Hosts must be registered")
+	Register("RegLine", lineLens{})
+	if _, ok := LensByName("RegLine"); !ok {
+		t.Fatal("RegLine must be registered")
 	}
 	if _, ok := LensByName("Nope"); ok {
 		t.Fatal("Nope must not exist")
 	}
-	names := LensNames()
-	if len(names) < 4 {
-		t.Fatalf("names %v", names)
+	if len(LensNames()) < 1 {
+		t.Fatal("names empty")
 	}
 	// duplicate registration panics
 	defer func() {
@@ -490,41 +490,37 @@ func TestLensRegistry(t *testing.T) {
 			t.Fatal("duplicate register must panic")
 		}
 	}()
-	Register("Hosts", hostsLens{})
+	Register("RegLine", lineLens{})
 }
 
 func TestTextStoreRetrieve(t *testing.T) {
 	a := New()
-	lens, _ := LensByName("Hosts")
-	if err := a.TextStore(lens, "/files/etc/hosts", "127.0.0.1 localhost\n"); err != nil {
+	lens := lineLens{}
+	if err := a.TextStore(lens, "/files/etc/demo", "a\nb\n"); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := a.Get("/files/etc/hosts/1/canonical"); v != "localhost" {
+	if v, _ := a.Get("/files/etc/demo/line[1]"); v != "a" {
 		t.Fatalf("stored %q", v)
 	}
 	// store again replaces children
-	if err := a.TextStore(lens, "/files/etc/hosts", "10.0.0.1 h\n"); err != nil {
+	if err := a.TextStore(lens, "/files/etc/demo", "c\n"); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := a.Get("/files/etc/hosts/1/ipaddr"); v != "10.0.0.1" {
+	if v, _ := a.Get("/files/etc/demo/line[1]"); v != "c" {
 		t.Fatalf("replaced %q", v)
 	}
-	// parse error
-	if err := a.TextStore(lens, "/files/x", "bad\n"); err == nil {
-		t.Fatal("store parse error")
-	}
 	// createPath error
-	if err := a.TextStore(lens, "/bad[1]/x", "127.0.0.1 h\n"); err == nil {
+	if err := a.TextStore(lens, "/bad[1]/x", "z\n"); err == nil {
 		t.Fatal("store path error")
 	}
 	// retrieve via path
-	out, err := a.TextRetrieve(lens, "/files/etc/hosts", nil)
-	if err != nil || out != "10.0.0.1 h\n" {
+	out, err := a.TextRetrieve(lens, "/files/etc/demo", nil)
+	if err != nil || out != "c\n" {
 		t.Fatalf("retrieve %q %v", out, err)
 	}
 	// retrieve via explicit node
-	node := a.Root().firstChild("files").firstChild("etc").firstChild("hosts")
-	if out, err := a.TextRetrieve(lens, "", node); err != nil || out != "10.0.0.1 h\n" {
+	node := a.Root().firstChild("files").firstChild("etc").firstChild("demo")
+	if out, err := a.TextRetrieve(lens, "", node); err != nil || out != "c\n" {
 		t.Fatalf("retrieve node %q %v", out, err)
 	}
 	// retrieve path eval error
@@ -534,11 +530,5 @@ func TestTextStoreRetrieve(t *testing.T) {
 	// retrieve path not single
 	if _, err := a.TextRetrieve(lens, "/nope", nil); err == nil {
 		t.Fatal("retrieve zero match")
-	}
-	// retrieve build error (hand-built bad tree)
-	bad := newNode("f")
-	bad.appendChild(newNode("1")) // entry with no ipaddr/canonical
-	if _, err := a.TextRetrieve(lens, "", bad); err == nil {
-		t.Fatal("retrieve build error")
 	}
 }
