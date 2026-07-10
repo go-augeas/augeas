@@ -97,3 +97,61 @@ func TestFaultInjectionShortRegs(t *testing.T) {
 	}
 	clearInject()
 }
+
+// TestFaultInjectionGet drives get with injected negative/empty registers and
+// mid-walk errors to hit the leaf no-match guards and s.err propagation guards.
+func TestFaultInjectionGet(t *testing.T) {
+	defer clearInject()
+	boom := errors.New("boom")
+	// leaves whose register is forced to "unmatched" (-1)
+	for _, body := range []string{
+		` let lns = del /a/ "a"`,
+		` let lns = store /a/`,
+		` let lns = key /a/`,
+	} {
+		l := compileLens(t, body)
+		injectAt(1, []int{-1, -1}, true, nil) // initRegs match: group0 unmatched
+		safe(func() { LnsGet(l, "a") })
+		injectAt(1, []int{-1, -1}, true, nil)
+		safe(func() { lnsParse(l, "a") })
+	}
+	// concat with a star in the middle so an error during the star's match
+	// propagates to the following child's getLens/parseLens s.err guard.
+	l := compileLens(t, ` let lns = del /a/ "a" . (del /b/ "b")* . del /c/ "c"`)
+	for k := 1; k <= 8; k++ {
+		injectAt(k, nil, false, boom)
+		safe(func() { LnsGet(l, "abc") })
+		injectAt(k, nil, false, boom)
+		safe(func() { lnsParse(l, "abc") })
+	}
+	// union where all branch registers are forced unmatched -> !applied
+	u := compileLens(t, ` let lns = del /a/ "a" | del /b/ "b"`)
+	injectAt(1, []int{-1, -1, -1, -1, -1, -1}, true, nil)
+	safe(func() { LnsGet(u, "a") })
+	injectAt(1, []int{-1, -1, -1, -1, -1, -1}, true, nil)
+	safe(func() { lnsParse(u, "a") })
+}
+
+// TestFaultInjectionRecursivePut drives put on a recursive lens with injected
+// failures to reach the recursive-parse and create error guards.
+func TestFaultInjectionRecursivePut(t *testing.T) {
+	defer clearInject()
+	boom := errors.New("boom")
+	src := "module M =\n let rec lns = [ del /\\(/ \"(\" . label \"g\" . lns* . del /\\)/ \")\" ] | [ label \"x\" . store /[a-z]/ ]\n"
+	i := New(srcMap(map[string]string{"m": src}))
+	l, err := i.LensValue("M", "lns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := "(a)"
+	forest, gerr := LnsGet(l, in)
+	if gerr != nil {
+		t.Skipf("recursive get failed: %v", gerr)
+	}
+	for k := 1; k <= 12; k++ {
+		injectAt(k, nil, false, boom)
+		safe(func() { LnsPut(l, forest, in) })
+		injectAt(k, nil, false, boom)
+		safe(func() { lnsParse(l, in) })
+	}
+}
