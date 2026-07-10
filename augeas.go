@@ -17,6 +17,7 @@ type Augeas struct {
 	vars      map[string][]*Node
 	fs        FileSystem
 	lastError error
+	eng       *Engine
 }
 
 // New returns an empty Augeas tree backed by the real filesystem.

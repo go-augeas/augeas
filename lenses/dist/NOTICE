@@ -1,0 +1,27 @@
+Embedded Augeas lens corpus
+===========================
+
+The `.aug` files in this directory (and in `tests/`) are the *unmodified*
+lens sources from the upstream Augeas project:
+
+    Project:  Augeas (https://augeas.net / https://github.com/hercules-team/augeas)
+    Version:  1.14.1
+    Commit:   22d715e8d4ad133e2eb085b9b38d1e4a37f911d2 (2026-04-08)
+    Authors:  David Lutterkort and the Augeas contributors (see upstream AUTHORS)
+
+LICENSE
+-------
+
+These lens sources are licensed under the **GNU Lesser General Public
+License, version 2.1 or later** (see `LICENSE.lenses`), which is the license
+of the upstream Augeas project. They are embedded verbatim as human-readable
+DSL source (compiled from source at build time by the pure-Go interpreter),
+analogous to how time-zone or Unicode data tables are embedded.
+
+This LGPL license applies ONLY to the files under `lenses/dist/`. The rest of
+the go-augeas/augeas repository (the pure-Go interpreter and API) is licensed
+under the BSD-3-Clause license (see the top-level `LICENSE`).
+
+The lens files are used unmodified so that go-augeas is behaviourally
+compatible with real Augeas and can be gated on Augeas's own `test`
+assertions.
