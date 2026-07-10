@@ -385,44 +385,13 @@ func (s *recState) parseUncached(l *Lens, pos int) []recResult {
 	// its whole ctype and build its tree with the coordinated single-match get,
 	// which correctly resolves internal boundaries (e.g. a store followed by a
 	// delimiter) that naive per-leaf longest matching would get wrong.
+	// Every non-recursive sub-lens (all leaves included) is handled by the
+	// terminal fast path, so the switch below only sees recursive structural
+	// nodes.
 	if !l.recursive && l.tag != lRec {
 		return s.parseTerminal(l, pos)
 	}
 	switch l.tag {
-	case lDel:
-		if regs, ok, _ := l.ctype.match(s.text, pos, len(s.text)); ok {
-			return []recResult{{end: regs[1]}}
-		}
-		return nil
-	case lStore:
-		if regs, ok, _ := l.ctype.match(s.text, pos, len(s.text)); ok {
-			v := s.text[pos:regs[1]]
-			return []recResult{{end: regs[1], val: &v}}
-		}
-		return nil
-	case lKey:
-		if regs, ok, _ := l.ctype.match(s.text, pos, len(s.text)); ok {
-			k := s.text[pos:regs[1]]
-			return []recResult{{end: regs[1], key: &k}}
-		}
-		return nil
-	case lLabel:
-		k := l.str
-		return []recResult{{end: pos, key: &k}}
-	case lValue:
-		v := l.str
-		return []recResult{{end: pos, val: &v}}
-	case lSeq:
-		n := s.seqs[l.str]
-		if n == 0 {
-			n = 1
-		}
-		s.seqs[l.str] = n + 1
-		k := strconv.Itoa(n)
-		return []recResult{{end: pos, key: &k}}
-	case lCounter:
-		s.seqs[l.str] = 1
-		return []recResult{{end: pos}}
 	case lRec:
 		return s.parse(l.body, pos)
 	case lSubtree:

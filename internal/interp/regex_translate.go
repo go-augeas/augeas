@@ -39,8 +39,9 @@ func toRE2(p string) (string, error) {
 				b.WriteByte(nx)
 			} else {
 				// Augeas allows escaping arbitrary characters; RE2 rejects
-				// unknown escapes, so emit the character literally.
-				writeLiteral(&b, nx)
+				// unknown escapes. nx is not an RE2 metacharacter here, so emit
+				// it literally.
+				b.WriteByte(nx)
 			}
 			i += 2
 		case '[':
@@ -76,14 +77,6 @@ func toRE2(p string) (string, error) {
 		}
 	}
 	return b.String(), nil
-}
-
-// writeLiteral writes a single byte, escaping it if RE2 would treat it as meta.
-func writeLiteral(b *strings.Builder, c byte) {
-	if strings.IndexByte(re2Meta, c) >= 0 {
-		b.WriteByte('\\')
-	}
-	b.WriteByte(c)
 }
 
 // translateClass copies a character class starting at p[start]=='[' and returns
