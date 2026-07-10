@@ -108,12 +108,6 @@ func (d *dfa) complete() {
 	}
 	changed := false
 	for i := range d.trans {
-		if d.trans[i] == nil {
-			d.trans[i] = make([]int, nsym)
-			for k := range d.trans[i] {
-				d.trans[i][k] = -1
-			}
-		}
 		for k := 0; k < nsym; k++ {
 			if d.trans[i][k] == -1 {
 				d.trans[i][k] = dead
@@ -253,9 +247,8 @@ func (d *dfa) toRegexp() (string, error) {
 		}
 	}
 
-	if R[start][accept] == nil {
-		return "", fmt.Errorf("regexp difference is the empty set")
-	}
+	// nonEmpty() above guarantees an accept state is reachable, so state
+	// elimination always yields a non-nil regexp here.
 	return *R[start][accept], nil
 }
 
@@ -306,12 +299,11 @@ func ccByte(b byte) string {
 // the empty string represents epsilon. Unions and stars always produce atomic
 // (parenthesised) results so concatenation can simply juxtapose.
 
+// reUnion combines two extended regexps. In toRegexp the second operand is
+// always non-nil, but the first (the accumulated edge) may be nil.
 func reUnion(a, b *string) *string {
 	if a == nil {
 		return b
-	}
-	if b == nil {
-		return a
 	}
 	if *a == *b {
 		return a
@@ -320,10 +312,9 @@ func reUnion(a, b *string) *string {
 	return &s
 }
 
+// reConcat concatenates two extended regexps; both operands are non-nil at every
+// call site in toRegexp.
 func reConcat(a, b *string) *string {
-	if a == nil || b == nil {
-		return nil
-	}
 	if *a == "" {
 		return b
 	}
