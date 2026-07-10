@@ -260,10 +260,24 @@ func (r *Regexp) nsub() int {
 	return r.nsubv
 }
 
+// matchHook is a test-only fault-injection seam. When non-nil it is consulted
+// on every match call; if it returns override==true the given result is used
+// instead of running the regexp. It lets tests exercise the defensive error
+// branches around matching (compile/match failures, spurious no-matches, and
+// inconsistent register arrays) without malformed real lenses.
+var matchHook func(call int) (regs []int, ok bool, err error, override bool)
+var matchCall int
+
 // match returns the register array (start,end pairs per group, -1 if unmatched)
 // for the longest match of r anchored at start within text[:end], and whether
 // it matched. Offsets are absolute into text. Group 0 is the whole match.
 func (r *Regexp) match(text string, start, end int) ([]int, bool, error) {
+	if matchHook != nil {
+		matchCall++
+		if regs, ok, err, override := matchHook(matchCall); override {
+			return regs, ok, err
+		}
+	}
 	if err := r.build(); err != nil {
 		return nil, false, err
 	}
