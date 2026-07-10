@@ -305,6 +305,8 @@ type recResult struct {
 	trees []*Tree
 	key   *string
 	val   *string
+	skel  *skel  // skeleton for put
+	dict  *pdict // dictionary for put
 }
 
 type recState struct {
@@ -427,12 +429,14 @@ func (s *recState) parseUncached(l *Lens, pos int) []recResult {
 		var out []recResult
 		for _, cr := range s.parse(l.child, pos) {
 			node := &Tree{Label: cr.key, Value: cr.val, Children: cr.trees}
-			out = append(out, recResult{end: cr.end, trees: []*Tree{node}})
+			r := recResult{end: cr.end, trees: []*Tree{node}, skel: &skel{tag: lSubtree}}
+			r.dict = makeDict(cr.key, cr.skel, cr.dict)
+			out = append(out, r)
 		}
 		return out
 	case lMaybe:
 		out := append([]recResult{}, s.parse(l.child, pos)...)
-		return append(out, recResult{end: pos})
+		return append(out, recResult{end: pos, skel: &skel{tag: lMaybe}})
 	case lUnion:
 		var out []recResult
 		for _, c := range l.children {
@@ -440,20 +444,7 @@ func (s *recState) parseUncached(l *Lens, pos int) []recResult {
 		}
 		return out
 	case lConcat:
-		results := []recResult{{end: pos}}
-		for _, c := range l.children {
-			var next []recResult
-			for _, r := range results {
-				for _, cr := range s.parse(c, r.end) {
-					next = append(next, mergeConcat(r, cr))
-				}
-			}
-			results = next
-			if len(results) == 0 {
-				return nil
-			}
-		}
-		return results
+		return s.parseRecConcat(l.children, pos)
 	case lStar:
 		return s.parseStar(l.child, pos)
 	case lSquare:
@@ -471,7 +462,10 @@ func (s *recState) parseUncached(l *Lens, pos int) []recResult {
 						eq = strings.EqualFold(lsq, rsq)
 					}
 					if eq {
-						out = append(out, mergeConcat(mergeConcat(r1, r2), r3))
+						m := mergeConcat(mergeConcat(r1, r2), r3)
+						m.skel = &skel{tag: lSquare, skels: []*skel{{tag: lConcat, skels: []*skel{r1.skel, r2.skel, r3.skel}}}}
+						m.dict = dictMerge(dictMerge(r1.dict, r2.dict), r3.dict)
+						out = append(out, m)
 					}
 				}
 			}
@@ -497,14 +491,17 @@ func (s *recState) parseTerminal(l *Lens, pos int) []recResult {
 	if gs.err != nil {
 		return nil
 	}
-	return []recResult{{end: regs[1], trees: trees, key: gs.key, val: gs.val}}
+	// Build the skeleton/dictionary for the same span so put can reuse it.
+	ps := &getState{text: s.text, regs: regs, nreg: 0, seqs: map[string]int{}}
+	sk, d := parseLens(l, ps)
+	return []recResult{{end: regs[1], trees: trees, key: gs.key, val: gs.val, skel: sk, dict: d}}
 }
 
 func (s *recState) parseStar(child *Lens, pos int) []recResult {
 	// zero or more repetitions; collect all reachable end positions.
-	results := []recResult{{end: pos}}
-	out := []recResult{{end: pos}}
-	seen := map[int]bool{pos: true}
+	empty := recResult{end: pos, skel: &skel{tag: lStar}}
+	results := []recResult{empty}
+	out := []recResult{empty}
 	for len(results) > 0 {
 		var next []recResult
 		for _, r := range results {
@@ -513,14 +510,55 @@ func (s *recState) parseStar(child *Lens, pos int) []recResult {
 					continue
 				}
 				m := mergeConcat(r, cr)
+				m.skel = &skel{tag: lStar, skels: append(append([]*skel{}, r.skel.skels...), cr.skel)}
+				m.dict = dictMerge(r.dict, cr.dict)
 				next = append(next, m)
-				if !seen[m.end] {
-					seen[m.end] = true
-				}
 				out = append(out, m)
 			}
 		}
-		results = next
+		results = dedupByEnd(next)
+	}
+	return out
+}
+
+// parseRecConcat parses a concat within a recursive lens, building a concat
+// skeleton and merged dictionary.
+func (s *recState) parseRecConcat(children []*Lens, pos int) []recResult {
+	type acc struct {
+		r     recResult
+		skels []*skel
+		dict  *pdict
+	}
+	accs := []acc{{r: recResult{end: pos}}}
+	for _, c := range children {
+		var next []acc
+		for _, a := range accs {
+			for _, cr := range s.parse(c, a.r.end) {
+				m := mergeConcat(a.r, cr)
+				ns := append(append([]*skel{}, a.skels...), cr.skel)
+				nd := dictMerge(a.dict, cr.dict)
+				next = append(next, acc{r: m, skels: ns, dict: nd})
+			}
+		}
+		// dedup by end position to keep the parse polynomial
+		seen := map[int]bool{}
+		accs = accs[:0]
+		for _, a := range next {
+			if seen[a.r.end] {
+				continue
+			}
+			seen[a.r.end] = true
+			accs = append(accs, a)
+		}
+		if len(accs) == 0 {
+			return nil
+		}
+	}
+	out := make([]recResult, 0, len(accs))
+	for _, a := range accs {
+		a.r.skel = &skel{tag: lConcat, skels: a.skels}
+		a.r.dict = a.dict
+		out = append(out, a.r)
 	}
 	return out
 }
@@ -537,4 +575,23 @@ func mergeConcat(a, b recResult) recResult {
 		r.val = b.val
 	}
 	return r
+}
+
+// dictMerge returns a new dictionary with b's entries appended after a's,
+// without mutating either operand (results are shared via memoisation).
+func dictMerge(a, b *pdict) *pdict {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	m := &pdict{entries: make(map[string][]*dentry, len(a.entries)+len(b.entries)), idx: map[string]int{}}
+	for k, v := range a.entries {
+		m.entries[k] = append([]*dentry{}, v...)
+	}
+	for k, v := range b.entries {
+		m.entries[k] = append(m.entries[k], v...)
+	}
+	return m
 }

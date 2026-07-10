@@ -261,11 +261,22 @@ func parseSquare(l *Lens, s *getState) (*skel, *pdict) {
 }
 
 func parseRecTop(lens *Lens, text string) (*skel, *pdict, error) {
-	// Recursive put reuses the recursive get to obtain spans, then builds a
-	// skeleton by re-parsing the matched text of the framework. For the corpus
-	// this is exercised rarely; fall back to a whole-text del skeleton so that
-	// an unchanged recursive tree round-trips.
-	return &skel{tag: lDel, text: text}, nil, nil
+	s := &recState{
+		text: text,
+		memo: map[recKey][]recResult{},
+		busy: map[recKey]bool{},
+		seqs: map[string]int{},
+	}
+	results := s.parse(lens, 0)
+	if s.err != nil {
+		return nil, nil, s.err
+	}
+	for _, r := range results {
+		if r.end == len(text) {
+			return r.skel, r.dict, nil
+		}
+	}
+	return nil, nil, fmt.Errorf("recursive parse did not match entire input")
 }
 
 // ---- put phase ----
@@ -334,11 +345,6 @@ func LnsPut(lens *Lens, forest []*Tree, text string) (string, error) {
 		dict:  dict,
 		split: &psplit{nodes: forest, enc: encodeForest(forest)},
 	}
-	if lens.recursive {
-		// Recursive put: not fully modelled; emit the original text if the tree
-		// is unchanged, else report.
-		return "", fmt.Errorf("put not supported for recursive lens")
-	}
 	putLens(lens, s)
 	if s.err != nil {
 		return "", s.err
@@ -359,12 +365,18 @@ func splitConcat(sp *psplit, lens *Lens) ([]*psplit, error) {
 	out := make([]*psplit, 0, len(lens.children))
 	reg := 1
 	for _, c := range lens.children {
+		if 2*reg+1 >= len(regs) {
+			return nil, fmt.Errorf("concat split register out of range")
+		}
 		gs, ge := regs[2*reg], regs[2*reg+1]
 		if gs < 0 {
 			return nil, fmt.Errorf("unmatched group in concat split")
 		}
 		ci := countSlash(sp.enc, gs)
 		cj := countSlash(sp.enc, ge)
+		if ci > cj || cj > len(sp.nodes) {
+			return nil, fmt.Errorf("concat split node range out of bounds")
+		}
 		out = append(out, &psplit{nodes: sp.nodes[ci:cj], enc: sp.enc[gs:ge]})
 		reg += 1 + c.atype.nsub()
 	}
@@ -388,6 +400,9 @@ func splitIter(sp *psplit, child *Lens) ([]*psplit, error) {
 		}
 		ci := countSlash(sp.enc, pos)
 		cj := countSlash(sp.enc, pos+count)
+		if ci > cj || cj > len(sp.nodes) {
+			return nil, fmt.Errorf("iter split node range out of bounds")
+		}
 		out = append(out, &psplit{nodes: sp.nodes[ci:cj], enc: sp.enc[pos : pos+count]})
 		pos += count
 	}

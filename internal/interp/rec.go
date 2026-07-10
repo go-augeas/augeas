@@ -25,6 +25,13 @@ func (i *interp) evalRec(name string, exp term, e *env) (Value, error) {
 	placeholder.body = l.lens
 	placeholder.resolved = true
 	placeholder.recursive = true
+	// Tie the knot: give the placeholder the resolved lens's types. These are
+	// finite because recursion is confined inside subtree boundaries (a nested
+	// block is a single tree token at its own level).
+	placeholder.ctype = l.lens.ctype
+	placeholder.atype = l.lens.atype
+	placeholder.ktype = l.lens.ktype
+	placeholder.vtype = l.lens.vtype
 	// Propagate recursiveness marker to the outer lens so get dispatches to
 	// getRec.
 	l.lens.recursive = true
