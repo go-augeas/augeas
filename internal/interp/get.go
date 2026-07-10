@@ -452,7 +452,13 @@ func (s *recState) parseUncached(l *Lens, pos int) []recResult {
 // builds its tree via the coordinated single-match get.
 func (s *recState) parseTerminal(l *Lens, pos int) []recResult {
 	regs, matched, err := l.ctype.match(s.text, pos, len(s.text))
-	if err != nil || !matched {
+	if err != nil {
+		if s.err == nil {
+			s.err = err
+		}
+		return nil
+	}
+	if !matched {
 		return nil
 	}
 	gs := &getState{text: s.text, regs: regs, nreg: 0, seqs: s.seqs}

@@ -44,25 +44,31 @@ func (a *Augeas) Load(lens Lens, pattern, mount string) error {
 	}
 	for _, f := range files {
 		base := path.Base(filepath.ToSlash(f))
-		data, err := a.fs.ReadFile(f)
-		if err != nil {
+		if err := a.loadOne(lens, f, mount, base); err != nil {
 			a.recordError(base, err.Error())
-			continue
 		}
-		parsed, err := lens.Parse(string(data))
-		if err != nil {
-			a.recordError(base, err.Error())
-			continue
-		}
-		dst, err := a.createFrom(a.root, trimLeadingSlash(mount)+"/"+base)
-		if err != nil {
-			a.recordError(base, err.Error())
-			continue
-		}
-		dst.Children = nil
-		for _, c := range parsed.Children {
-			dst.appendChild(c)
-		}
+	}
+	return nil
+}
+
+// loadOne reads, parses and grafts a single file; any failure is returned so
+// Load can record it under /augeas/files/<base>/error.
+func (a *Augeas) loadOne(lens Lens, f, mount, base string) error {
+	data, err := a.fs.ReadFile(f)
+	if err != nil {
+		return err
+	}
+	parsed, err := lens.Parse(string(data))
+	if err != nil {
+		return err
+	}
+	dst, err := a.createFrom(a.root, trimLeadingSlash(mount)+"/"+base)
+	if err != nil {
+		return err
+	}
+	dst.Children = nil
+	for _, c := range parsed.Children {
+		dst.appendChild(c)
 	}
 	return nil
 }

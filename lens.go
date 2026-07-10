@@ -51,13 +51,20 @@ func LensNames() []string {
 // children of the node at path (creating the path). Any existing children at
 // path are replaced.
 func (a *Augeas) TextStore(lens Lens, path, text string) error {
+	if err := a.textStoreInto(lens, path, text); err != nil {
+		return a.fail(err)
+	}
+	return nil
+}
+
+func (a *Augeas) textStoreInto(lens Lens, path, text string) error {
 	parsed, err := lens.Parse(text)
 	if err != nil {
-		return a.fail(err)
+		return err
 	}
 	dst, err := a.createPath(path)
 	if err != nil {
-		return a.fail(err)
+		return err
 	}
 	dst.Children = nil
 	for _, c := range parsed.Children {

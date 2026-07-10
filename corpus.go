@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/go-augeas/augeas/internal/interp"
 )
@@ -105,27 +105,27 @@ func (e *Engine) Lens(module, binding string) (Lens, error) {
 
 var moduleNameRe = regexp.MustCompile(`(?m)^module\s+(\w+)`)
 
+// corpusModuleNames returns the declared module name of every embedded dist
+// lens, computed once. Non-lens directory entries are skipped.
+var corpusModuleNames = sync.OnceValue(func() []string {
+	var names []string
+	entries, _ := corpusFS.ReadDir("lenses/dist")
+	for _, ent := range entries {
+		if !strings.HasSuffix(ent.Name(), ".aug") {
+			continue
+		}
+		src, _ := corpusFS.ReadFile("lenses/dist/" + ent.Name())
+		if m := moduleNameRe.FindSubmatch(src); m != nil {
+			names = append(names, string(m[1]))
+		}
+	}
+	return names
+})
+
 // fileLens finds the corpus module whose autoload transform includes path and
 // returns its lens. It mirrors the /augeas/load mechanism of real Augeas.
 func (e *Engine) fileLens(p string) (Lens, string, error) {
-	entries, err := corpusFS.ReadDir("lenses/dist")
-	if err != nil {
-		return nil, "", err
-	}
-	for _, ent := range entries {
-		name := ent.Name()
-		if !strings.HasSuffix(name, ".aug") {
-			continue
-		}
-		src, err := corpusFS.ReadFile("lenses/dist/" + name)
-		if err != nil {
-			continue
-		}
-		m := moduleNameRe.FindSubmatch(src)
-		if m == nil {
-			continue
-		}
-		module := string(m[1])
+	for _, module := range corpusModuleNames() {
 		lens, filters, err := e.i.Autoload(module)
 		if err != nil {
 			continue
@@ -158,35 +158,35 @@ func filterMatches(filters []interp.Filter, p string) bool {
 
 func globMatch(glob, p string) bool {
 	ok, err := path.Match(glob, p)
-	if err == nil && ok {
-		return true
-	}
-	// Augeas globs may use brace/recursive forms; fall back to base match.
-	if b, err := path.Match(glob, filepath.ToSlash(p)); err == nil && b {
-		return true
-	}
-	return false
+	return err == nil && ok
 }
 
 // LoadFile reads path through the filesystem seam, selects the matching lens
 // from the corpus autoload filters, and stores the parsed tree under
 // /files/<path>. It is the interpreted-corpus analogue of Augeas' aug_load.
 func (a *Augeas) LoadFile(path string) error {
+	if err := a.loadFileInto(path); err != nil {
+		return a.fail(err)
+	}
+	return nil
+}
+
+func (a *Augeas) loadFileInto(path string) error {
 	lens, _, err := a.engine().fileLens(path)
 	if err != nil {
-		return a.fail(err)
+		return err
 	}
 	data, err := a.fs.ReadFile(path)
 	if err != nil {
-		return a.fail(err)
+		return err
 	}
 	parsed, err := lens.Parse(string(data))
 	if err != nil {
-		return a.fail(err)
+		return err
 	}
 	dst, err := a.createFrom(a.root, "files"+ensureSlash(path))
 	if err != nil {
-		return a.fail(err)
+		return err
 	}
 	dst.Children = nil
 	for _, c := range parsed.Children {
