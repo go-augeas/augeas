@@ -352,13 +352,40 @@ func (s *recState) parse(l *Lens, pos int) []recResult {
 		return nil // break left-recursion cycle
 	}
 	s.busy[key] = true
-	res := s.parseUncached(l, pos)
+	res := dedupByEnd(s.parseUncached(l, pos))
 	s.busy[key] = false
 	s.memo[key] = res
 	return res
 }
 
+// dedupByEnd keeps at most one result per distinct end position. The corpus
+// lenses are unambiguous, so this preserves correctness while preventing the
+// exponential result fan-out that a naive chart parse would produce on large
+// inputs.
+func dedupByEnd(rs []recResult) []recResult {
+	if len(rs) <= 1 {
+		return rs
+	}
+	seen := make(map[int]bool, len(rs))
+	out := rs[:0:0]
+	for _, r := range rs {
+		if seen[r.end] {
+			continue
+		}
+		seen[r.end] = true
+		out = append(out, r)
+	}
+	return out
+}
+
 func (s *recState) parseUncached(l *Lens, pos int) []recResult {
+	// A non-recursive sub-lens is a "terminal" of the recursive grammar: match
+	// its whole ctype and build its tree with the coordinated single-match get,
+	// which correctly resolves internal boundaries (e.g. a store followed by a
+	// delimiter) that naive per-leaf longest matching would get wrong.
+	if !l.recursive && l.tag != lRec {
+		return s.parseTerminal(l, pos)
+	}
 	switch l.tag {
 	case lDel:
 		if regs, ok, _ := l.ctype.match(s.text, pos, len(s.text)); ok {
@@ -456,6 +483,21 @@ func (s *recState) parseUncached(l *Lens, pos int) []recResult {
 		}
 		return nil
 	}
+}
+
+// parseTerminal matches a non-recursive sub-lens's whole ctype at pos and
+// builds its tree via the coordinated single-match get.
+func (s *recState) parseTerminal(l *Lens, pos int) []recResult {
+	regs, matched, err := l.ctype.match(s.text, pos, len(s.text))
+	if err != nil || !matched {
+		return nil
+	}
+	gs := &getState{text: s.text, regs: regs, nreg: 0, seqs: s.seqs}
+	trees := getLens(l, gs)
+	if gs.err != nil {
+		return nil
+	}
+	return []recResult{{end: regs[1], trees: trees, key: gs.key, val: gs.val}}
 }
 
 func (s *recState) parseStar(child *Lens, pos int) []recResult {
