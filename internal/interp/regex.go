@@ -29,6 +29,8 @@ type Regexp struct {
 	compiled *regexp.Regexp
 	nsubv    int
 	built    bool
+
+	cachedRestrict *Regexp // memoised restrict() result
 }
 
 func newRegexp(pattern string, nocase bool) *Regexp {

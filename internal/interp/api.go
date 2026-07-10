@@ -57,3 +57,9 @@ func (i *interp) Autoload(module string) (*Lens, []Filter, error) {
 
 // Get parses text with lens into a forest.
 func Get(lens *Lens, text string) ([]*Tree, error) { return LnsGet(lens, text) }
+
+// Put serialises forest back to text with lens, reusing the skeleton parsed
+// from text where the tree is unchanged.
+func Put(lens *Lens, forest []*Tree, text string) (string, error) {
+	return LnsPut(lens, forest, text)
+}

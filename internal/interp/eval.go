@@ -38,6 +38,7 @@ func New(src Source) *interp {
 		loading: map[string]bool{},
 	}
 	registerBuiltins(i)
+	registerTreeCmds(i)
 	return i
 }
 

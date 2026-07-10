@@ -4,7 +4,10 @@
 
 package interp
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // re2Meta are the characters that carry special meaning in RE2 outside a
 // character class and therefore must keep a preceding backslash to be taken
@@ -133,6 +136,218 @@ func translateClass(p string, start int) (int, string) {
 	// Unterminated class: close it defensively.
 	b.WriteByte(']')
 	return i, b.String()
+}
+
+// restrictRE2 rewrites an RE2 pattern so it can never match the reserved
+// encoding bytes \x01-\x04 (ENC_EQ/ENC_SLASH and friends). This mirrors
+// upstream restrict_regexp, which keeps key/value types from spanning the
+// encoded-tree separators during put. It rewrites "." and negated classes to
+// also exclude the reserved range.
+func restrictRE2(p string) string {
+	const excl = `\x01-\x04`
+	var b strings.Builder
+	i, n := 0, len(p)
+	for i < n {
+		c := p[i]
+		switch c {
+		case '\\':
+			if i+1 < n {
+				b.WriteByte(c)
+				b.WriteByte(p[i+1])
+				i += 2
+			} else {
+				b.WriteByte(c)
+				i++
+			}
+		case '.':
+			b.WriteString(`[^` + excl + "\n]")
+			i++
+		case '[':
+			j := re2ClassEnd(p, i)
+			cls := p[i:j]
+			if len(cls) >= 2 && cls[1] == '^' {
+				// Insert the exclusion right after "[^" (and after a leading
+				// literal ']') so it cannot merge with a trailing bare '-' into
+				// an invalid range.
+				ins := 2
+				if ins < len(cls)-1 && cls[ins] == ']' {
+					ins++
+				}
+				b.WriteString(cls[:ins])
+				b.WriteString(excl)
+				b.WriteString(cls[ins:])
+			} else {
+				// Positive class: clip the reserved byte range out of every
+				// member so the class can never match \x01-\x04.
+				b.WriteString(clipReservedClass(cls))
+			}
+			i = j
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+// clipReservedClass rewrites a positive RE2 character class so it excludes the
+// reserved bytes \x01-\x04, by decoding its member byte ranges, subtracting
+// [1,4], and re-emitting. cls includes the surrounding brackets.
+func clipReservedClass(cls string) string {
+	if len(cls) < 2 {
+		return cls
+	}
+	body := cls[1 : len(cls)-1]
+	ranges, posix := parseClassBody(body)
+	var out []byteRange
+	for _, r := range ranges {
+		out = append(out, subtractReserved(r)...)
+	}
+	if len(out) == 0 && posix == "" {
+		// Nothing left; use a class that matches nothing meaningful but stays
+		// valid. An empty positive class is invalid in RE2, so emit a range that
+		// cannot occur in practice.
+		return `[\x00]`
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	b.WriteString(posix)
+	for _, r := range out {
+		if r.lo == r.hi {
+			b.WriteString(classByte(r.lo))
+		} else {
+			b.WriteString(classByte(r.lo))
+			b.WriteByte('-')
+			b.WriteString(classByte(r.hi))
+		}
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+type byteRange struct{ lo, hi int }
+
+// parseClassBody decodes an RE2 positive-class body into byte ranges plus any
+// POSIX class tokens (which are copied through verbatim).
+func parseClassBody(s string) ([]byteRange, string) {
+	var ranges []byteRange
+	var posix strings.Builder
+	i, n := 0, len(s)
+	for i < n {
+		if s[i] == '[' && i+1 < n && s[i+1] == ':' {
+			if j := posixClassEnd(s, i); j > 0 {
+				posix.WriteString(s[i:j])
+				i = j
+				continue
+			}
+		}
+		lo, adv := decodeClassByte(s, i)
+		i = adv
+		if i+1 < n && s[i] == '-' && s[i+1] != ']' {
+			hi, adv2 := decodeClassByte(s, i+1)
+			i = adv2
+			ranges = append(ranges, byteRange{lo, hi})
+		} else {
+			ranges = append(ranges, byteRange{lo, lo})
+		}
+	}
+	return ranges, posix.String()
+}
+
+// decodeClassByte decodes one class member byte at s[i], returning its value and
+// the next index.
+func decodeClassByte(s string, i int) (int, int) {
+	if s[i] != '\\' || i+1 >= len(s) {
+		return int(s[i]), i + 1
+	}
+	c := s[i+1]
+	switch c {
+	case 'x':
+		if i+3 < len(s) {
+			v := hexVal(s[i+2])*16 + hexVal(s[i+3])
+			return v, i + 4
+		}
+		return int('x'), i + 2
+	case 'n':
+		return '\n', i + 2
+	case 't':
+		return '\t', i + 2
+	case 'r':
+		return '\r', i + 2
+	case 'f':
+		return '\f', i + 2
+	case 'v':
+		return '\v', i + 2
+	case 'a':
+		return '\a', i + 2
+	default:
+		return int(c), i + 2
+	}
+}
+
+func hexVal(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return 0
+}
+
+// subtractReserved removes [1,4] from a byte range.
+func subtractReserved(r byteRange) []byteRange {
+	const lo, hi = 1, 4
+	if r.hi < lo || r.lo > hi {
+		return []byteRange{r}
+	}
+	var out []byteRange
+	if r.lo < lo {
+		out = append(out, byteRange{r.lo, lo - 1})
+	}
+	if r.hi > hi {
+		out = append(out, byteRange{hi + 1, r.hi})
+	}
+	return out
+}
+
+// classByte renders a byte for inclusion in an RE2 character class.
+func classByte(b int) string {
+	switch byte(b) {
+	case ']', '\\', '^', '-':
+		return "\\" + string(byte(b))
+	}
+	if b < 0x20 || b > 0x7e {
+		return fmt.Sprintf("\\x%02x", b)
+	}
+	return string(byte(b))
+}
+
+// re2ClassEnd returns the index just past the ']' closing the RE2 class at
+// p[start]=='['. RE2 class semantics: backslash escapes; a ']' right after '['
+// or '[^' is a literal member.
+func re2ClassEnd(p string, start int) int {
+	i := start + 1
+	n := len(p)
+	if i < n && p[i] == '^' {
+		i++
+	}
+	if i < n && p[i] == ']' {
+		i++
+	}
+	for i < n {
+		if p[i] == '\\' && i+1 < n {
+			i += 2
+			continue
+		}
+		if p[i] == ']' {
+			return i + 1
+		}
+		i++
+	}
+	return n
 }
 
 // posixClassEnd reports the index just past a well-formed POSIX class token

@@ -114,14 +114,83 @@ func runOneTest(i *interp, e *env, tt *testTerm) (ok bool, skipped bool, msg str
 				len(forest), len(rt.forest))
 		}
 	case *putTestTerm:
-		return false, true, "put test (not yet run)"
+		return runPutTest(i, e, te, tt)
 	}
 	return false, true, "unknown test kind"
+}
+
+func runPutTest(i *interp, e *env, te *putTestTerm, tt *testTerm) (ok bool, skipped bool, msg string) {
+	lv, err := i.eval(te.lens, e)
+	if err != nil {
+		return false, false, "lens eval: " + err.Error()
+	}
+	lens, isLens := lv.(*vLens)
+	if !isLens {
+		return false, false, "put lens is not a lens"
+	}
+	av, err := i.eval(te.arg, e)
+	if err != nil {
+		return false, false, "arg eval: " + err.Error()
+	}
+	input, isStr := av.(vString)
+	if !isStr {
+		return false, false, "put arg is not a string"
+	}
+	out, perr := runPut(i, e, lens.lens, string(input), te.cmds)
+	switch tt.tag {
+	case trExn:
+		if perr != nil {
+			return true, false, ""
+		}
+		return false, false, "expected put failure but it succeeded"
+	case trPrint:
+		if perr != nil {
+			return false, false, perr.Error()
+		}
+		return true, false, ""
+	default:
+		if perr != nil {
+			return false, false, "put: " + perr.Error()
+		}
+		rv, err := i.eval(tt.result, e)
+		if err != nil {
+			return false, false, "result eval: " + err.Error()
+		}
+		want, isStr := rv.(vString)
+		if !isStr {
+			return false, false, "expected result not a string"
+		}
+		if out == string(want) {
+			return true, false, ""
+		}
+		return false, false, fmt.Sprintf("put mismatch: got %q want %q", out, string(want))
+	}
+}
+
+func runPut(i *interp, e *env, lens *Lens, input string, cmds term) (string, error) {
+	forest, err := LnsGet(lens, input)
+	if err != nil {
+		return "", err
+	}
+	cmdFn, err := i.eval(cmds, e)
+	if err != nil {
+		return "", err
+	}
+	res, err := i.apply(cmdFn, &vTree{forest: forest})
+	if err != nil {
+		return "", err
+	}
+	tv, ok := res.(*vTree)
+	if !ok {
+		return "", fmt.Errorf("command did not return a tree")
+	}
+	return LnsPut(lens, tv.forest, input)
 }
 
 func TestCorpus(t *testing.T) {
 	names := testModuleNames(t)
 	var total tally
+	var getT, putT tally
 	perModule := map[string]tally{}
 	var loadErrs []string
 	var failLog []string
@@ -136,7 +205,12 @@ func TestCorpus(t *testing.T) {
 		}
 		var mt tally
 		for _, tt := range m.tests {
+			_, isPut := tt.exp.(*putTestTerm)
 			ok, skipped, msg := runOneTest(i, m.env, tt)
+			kind := &getT
+			if isPut {
+				kind = &putT
+			}
 			switch {
 			case skipped:
 				mt.skip++
@@ -144,9 +218,11 @@ func TestCorpus(t *testing.T) {
 			case ok:
 				mt.pass++
 				total.pass++
+				kind.pass++
 			default:
 				mt.fail++
 				total.fail++
+				kind.fail++
 				failLog = append(failLog, fmt.Sprintf("FAIL %s:%d: %s", name, tt.line, firstLine(msg)))
 			}
 		}
@@ -165,9 +241,12 @@ func TestCorpus(t *testing.T) {
 		_ = os.WriteFile("/tmp/aug_permodule.txt", []byte(strings.Join(pm, "\n")+"\n"), 0o644)
 	}
 	t.Logf("=== Load errors: %d ===", len(loadErrs))
-	getAssertions := total.pass + total.fail
-	t.Logf("=== GET assertions: %d passing, %d failing / %d total (%.1f%%); put-skipped: %d ===",
-		total.pass, total.fail, getAssertions, pct(total.pass, getAssertions), total.skip)
+	getA := getT.pass + getT.fail
+	putA := putT.pass + putT.fail
+	allA := total.pass + total.fail
+	t.Logf("=== GET: %d/%d passing (%.1f%%) ===", getT.pass, getA, pct(getT.pass, getA))
+	t.Logf("=== PUT: %d/%d passing (%.1f%%) ===", putT.pass, putA, pct(putT.pass, putA))
+	t.Logf("=== ALL: %d/%d passing (%.1f%%) ===", total.pass, allA, pct(total.pass, allA))
 	t.Logf("=== Modules: %d attempted, %d failed to load ===", len(names), len(loadErrs))
 }
 
