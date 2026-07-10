@@ -121,10 +121,53 @@ func unionType(a, b *Regexp) *Regexp {
 	}
 }
 
+// flatOperands returns l's children when l is an n-ary node of tag, and [l]
+// otherwise. Concatenation and union are associative, so splicing a same-tag
+// operand's children into the parent yields a semantically identical lens with
+// one fewer capture group per level. That matters because the ctype regexps are
+// matched by Go's RE2 engine, whose thread-list step copies the whole capture
+// array on every transition — cost that grows with the group count. Flattening
+// the deeply left-nested trees the parser builds (`a . b . c . …` and
+// `e1 | e2 | …`) roughly halves the groups on large lenses (e.g. Sshd) and with
+// them the RE2 match cost, while the get/put walkers already iterate children
+// n-ary via the same nreg accounting.
+func flatOperands(l *Lens, tag lensTag) []*Lens {
+	if l.tag == tag {
+		return l.children
+	}
+	return []*Lens{l}
+}
+
+// mergeChildren concatenates the (possibly spliced) operand lists into a fresh
+// slice, never aliasing an operand's backing array.
+func mergeChildren(a, b []*Lens) []*Lens {
+	out := make([]*Lens, 0, len(a)+len(b))
+	out = append(out, a...)
+	out = append(out, b...)
+	return out
+}
+
+func childCtypes(children []*Lens) []*Regexp {
+	rs := make([]*Regexp, len(children))
+	for i, c := range children {
+		rs[i] = c.ctype
+	}
+	return rs
+}
+
+func childAtypes(children []*Lens) []*Regexp {
+	rs := make([]*Regexp, len(children))
+	for i, c := range children {
+		rs[i] = c.atype
+	}
+	return rs
+}
+
 func makeConcat(l1, l2 *Lens) *Lens {
-	l := &Lens{tag: lConcat, children: []*Lens{l1, l2}}
-	l.ctype = regexpConcatN([]*Regexp{l1.ctype, l2.ctype})
-	l.atype = regexpConcatN([]*Regexp{l1.atype, l2.atype})
+	children := mergeChildren(flatOperands(l1, lConcat), flatOperands(l2, lConcat))
+	l := &Lens{tag: lConcat, children: children}
+	l.ctype = regexpConcatN(childCtypes(children))
+	l.atype = regexpConcatN(childAtypes(children))
 	l.ktype = firstType(l1.ktype, l2.ktype)
 	l.vtype = firstType(l1.vtype, l2.vtype)
 	l.consumesValue = l1.consumesValue || l2.consumesValue
@@ -135,9 +178,10 @@ func makeConcat(l1, l2 *Lens) *Lens {
 }
 
 func makeUnion(l1, l2 *Lens) *Lens {
-	l := &Lens{tag: lUnion, children: []*Lens{l1, l2}}
-	l.ctype = regexpUnionN([]*Regexp{l1.ctype, l2.ctype})
-	l.atype = regexpUnionN([]*Regexp{l1.atype, l2.atype})
+	children := mergeChildren(flatOperands(l1, lUnion), flatOperands(l2, lUnion))
+	l := &Lens{tag: lUnion, children: children}
+	l.ctype = regexpUnionN(childCtypes(children))
+	l.atype = regexpUnionN(childAtypes(children))
 	l.ktype = unionType(l1.ktype, l2.ktype)
 	l.vtype = unionType(l1.vtype, l2.vtype)
 	l.consumesValue = l1.consumesValue && l2.consumesValue

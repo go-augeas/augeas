@@ -62,14 +62,31 @@ warm-up. The Go side is `lens.Parse` on the same bytes.
 |--------------|---------:|----------------------:|---------------:|
 | `Hosts.lns` | 41 109 | 49 976 | **1.22× faster** |
 | `Fstab.lns` | 50 953 | 58 927 | **1.16× faster** |
-| `Sshd.lns`  | 896 581 | 152 195 | **0.17× — 5.9× slower** |
+| `Sshd.lns`  | 706 712 | 152 195 | **0.22× — 4.6× slower** |
 
 The pure-Go interpreter **beats reference C Augeas on `Hosts` and `Fstab`** (the
-common small-record lenses) and is **5.9× slower on `Sshd`** — exactly the
-hotspot called out above: `Sshd.lns` has a very large `ctype` union whose
-compiled RE2 dominates the Go `get`. So the "≥ reference" rule holds for the
-typical lenses but **not yet for `Sshd`**, which stays the primary optimisation
-target. This is reported honestly rather than averaged away.
+common small-record lenses) and is **4.6× slower on `Sshd`** — the hotspot
+called out above: `Sshd.lns` has a very large `ctype` union whose compiled RE2
+dominates the Go `get`. So the "≥ reference" rule holds for the typical lenses
+but **not yet for `Sshd`**, which stays the primary optimisation target. This is
+reported honestly rather than averaged away.
+
+**Update — n-ary flattening (measured on the same z15).** Profiling
+`BenchmarkGetSshd` showed the whole hotspot is `runtime.memmove` inside
+`regexp.(*machine).add`: Go's RE2 thread-list step copies the entire
+capture-register array on every NFA transition, and the Sshd `ctype` union had
+**~999 capture groups**, so each step memmoved a ~2000-int array. (The regexps
+are already compiled once and cached in `Regexp.build` — no recompilation
+happens in `get`; `regexp.Compile` never appears in the profile.) The parser
+built `a . b . c . …` / `e1 | e2 | …` as deeply left-nested **binary**
+concat/union lenses, each level adding one wrapper group. Since concat and union
+are associative, `makeConcat`/`makeUnion` now splice same-tag operands into
+**n-ary** nodes, cutting the Sshd groups **999 → 782**. Paired same-session z15
+means (100 000×, `-count=3`): **883 487 ns → 706 712 ns (1.25×; ratio vs C
+5.9× → 4.6× slower)**, with corpus compat unchanged at 1763/1791 (98.4%) and
+100% coverage. The residual is still `memmove` in `machine.add` scaled to the
+782 remaining groups; closing it fully needs non-capturing-group `nreg` rework
+or a per-branch union matcher (a deeper RE2-alternative), tracked as follow-up.
 
 The C reference harness used:
 
