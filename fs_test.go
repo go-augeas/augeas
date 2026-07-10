@@ -127,3 +127,60 @@ var errParse = fsErr("boom")
 type fsErr string
 
 func (e fsErr) Error() string { return string(e) }
+
+func TestSaveErrors(t *testing.T) {
+	a := New()
+	a.SetFileSystem(fakeFS{files: map[string]string{}})
+	a.Set("/files/d/line[1]", "a")
+	// mount matches !=1 -> error (no such mount)
+	if err := a.Save(lineLens{}, "/files/nope", "/out"); err == nil {
+		t.Fatal("save no-match mount")
+	}
+	// build error via errLens
+	a.Set("/x/y", "z")
+	if err := a.Save(errLens{}, "/x/y", "/out"); err == nil {
+		t.Fatal("save build error")
+	}
+	// successful save
+	if err := a.Save(lineLens{}, "/files/d", "/out"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+}
+
+func TestLoadGlobError(t *testing.T) {
+	a := New()
+	a.SetFileSystem(errGlobFS{})
+	if err := a.Load(lineLens{}, "*", "/files"); err == nil {
+		t.Fatal("expected glob error")
+	}
+}
+
+type errGlobFS struct{}
+
+func (errGlobFS) ReadFile(string) ([]byte, error)             { return nil, fsErr("x") }
+func (errGlobFS) WriteFile(string, []byte, fs.FileMode) error { return nil }
+func (errGlobFS) Glob(string) ([]string, error)               { return nil, fsErr("glob boom") }
+
+func TestLoadReadError(t *testing.T) {
+	a := New()
+	a.SetFileSystem(readErrFS{})
+	// glob returns a file, read fails -> recorded error, Load returns nil
+	if err := a.Load(lineLens{}, "*x", "/files"); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if v, _ := a.Get("/augeas/files/x/error"); v == "" {
+		t.Fatal("expected recorded read error")
+	}
+}
+
+type readErrFS struct{}
+
+func (readErrFS) ReadFile(string) ([]byte, error)             { return nil, fsErr("read boom") }
+func (readErrFS) WriteFile(string, []byte, fs.FileMode) error { return nil }
+func (readErrFS) Glob(string) ([]string, error)               { return []string{"/etc/x"}, nil }
+
+func TestTrimLeadingSlash(t *testing.T) {
+	if trimLeadingSlash("/a") != "a" || trimLeadingSlash("a") != "a" {
+		t.Fatal("trimLeadingSlash")
+	}
+}
