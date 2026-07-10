@@ -51,9 +51,7 @@ func parsePath(p string) ([]pathSeg, error) {
 			}
 			label = part[:i]
 			pred := strings.TrimSpace(part[i+1 : len(part)-1])
-			if err := parsePredicate(&seg, pred); err != nil {
-				return nil, err
-			}
+			parsePredicate(&seg, pred)
 		}
 		if label == "*" {
 			seg.wildcard = true
@@ -88,7 +86,7 @@ func splitPathParts(p string) []string {
 	return parts
 }
 
-func parsePredicate(seg *pathSeg, pred string) error {
+func parsePredicate(seg *pathSeg, pred string) {
 	switch {
 	case pred == "last()":
 		seg.kind = predLast
@@ -104,7 +102,7 @@ func parsePredicate(seg *pathSeg, pred string) error {
 		if n, err := strconv.Atoi(pred); err == nil {
 			seg.kind = predIndex
 			seg.index = n
-			return nil
+			return
 		}
 		// child existence or child = 'v'
 		seg.kind = predChild
@@ -116,7 +114,6 @@ func parsePredicate(seg *pathSeg, pred string) error {
 			seg.child = pred
 		}
 	}
-	return nil
 }
 
 func unquotePred(s string) string {

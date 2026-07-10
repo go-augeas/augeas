@@ -128,9 +128,6 @@ func (n *nfa) epsilonFrag() frag {
 
 func (n *nfa) build(re *syntax.Regexp, ab *alphabet) frag {
 	switch re.Op {
-	case syntax.OpNoMatch:
-		// A fragment with no edge rejects everything.
-		return frag{n.newState(), n.newState()}
 	case syntax.OpLiteral:
 		return n.literalFrag(re.Rune, ab)
 	case syntax.OpCharClass:
