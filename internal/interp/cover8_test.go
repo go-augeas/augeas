@@ -9,9 +9,7 @@ import "testing"
 func TestTranslatePosixFail(t *testing.T) {
 	// '[:' that is not a valid POSIX class (no ':]') -> literal '[' branch
 	for _, c := range []string{`[[:x]]`, `[a[:9]b]`, `[[:]]`} {
-		if _, err := toRE2(c); err != nil {
-			t.Errorf("toRE2(%q): %v", c, err)
-		}
+		_ = toRE2(c)
 	}
 	// restrictRE2 with a positive class containing '[:' that is not POSIX
 	_ = restrictRE2(`[a[:z]b]`)

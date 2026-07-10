@@ -51,23 +51,19 @@ func TestBrokenAtypePut(t *testing.T) {
 
 func TestToRE2Escapes(t *testing.T) {
 	// backslash before a non-meta char (dropped), before meta (kept)
-	if got, _ := toRE2(`\ \.`); got != ` \.` {
+	if got := toRE2(`\ \.`); got != ` \.` {
 		t.Fatalf("escape drop/keep: %q", got)
 	}
 	// class with POSIX and escapes
-	if _, err := toRE2(`[[:alpha:]\]a]`); err != nil {
-		t.Fatalf("class posix: %v", err)
-	}
+	_ = toRE2(`[[:alpha:]\]a]`)
 	// unterminated class (defensive close)
-	if got, _ := toRE2(`[abc`); !strings.HasSuffix(got, "]") {
+	if got := toRE2(`[abc`); !strings.HasSuffix(got, "]") {
 		t.Fatalf("unterminated class: %q", got)
 	}
 	// '[' not a POSIX class member
-	if _, err := toRE2(`[a[b]`); err != nil {
-		t.Fatalf("literal bracket: %v", err)
-	}
-	// literal meta writeLiteral path via unknown escape that is a meta char
-	if got, _ := toRE2(`\+`); got != `\+` {
+	_ = toRE2(`[a[b]`)
+	// escaped meta character kept
+	if got := toRE2(`\+`); got != `\+` {
 		t.Fatalf("escaped plus: %q", got)
 	}
 }

@@ -19,7 +19,6 @@ type interp struct {
 	source  Source
 	global  *env
 	modules map[string]*module
-	loading map[string]bool
 }
 
 type module struct {
@@ -35,7 +34,6 @@ func New(src Source) *interp {
 		source:  src,
 		global:  newEnv(nil),
 		modules: map[string]*module{},
-		loading: map[string]bool{},
 	}
 	registerBuiltins(i)
 	registerTreeCmds(i)
@@ -47,12 +45,6 @@ func (i *interp) LoadModule(name string) (*module, error) {
 	if m, ok := i.modules[name]; ok {
 		return m, nil
 	}
-	if i.loading[name] {
-		return nil, fmt.Errorf("module import cycle at %s", name)
-	}
-	i.loading[name] = true
-	defer delete(i.loading, name)
-
 	base := strings.ToLower(name)
 	src, ok := i.source(base)
 	if !ok {

@@ -16,17 +16,10 @@ func TestRegexTranslateClasses(t *testing.T) {
 	if _, ok, _ := res.match("a", 0, 1); !ok {
 		t.Error("restricted class should still match 'a'")
 	}
-	// ']' as first class member
-	if _, err := toRE2(`[]a]`); err != nil {
-		t.Errorf("]-first class: %v", err)
-	}
-	// literal '[' member and POSIX class in same class
-	if _, err := toRE2(`[a[:digit:]b]`); err != nil {
-		t.Errorf("posix+literal: %v", err)
-	}
-	if _, err := toRE2(`[a[b]`); err != nil {
-		t.Errorf("literal bracket: %v", err)
-	}
+	// ']' as first class member; literal '[' + POSIX class
+	_ = toRE2(`[]a]`)
+	_ = toRE2(`[a[:digit:]b]`)
+	_ = toRE2(`[a[b]`)
 	// negated class with leading ']' through restrict (insert-after-] path)
 	_ = restrict(newRawRegexp(`[^]a-]`))
 	// restrict a "." (any-non-newline) and a POSIX class in restrictRE2

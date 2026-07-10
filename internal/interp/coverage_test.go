@@ -205,7 +205,7 @@ func TestGetUnusedKeyValue(t *testing.T) {
 
 func TestToRE2Errors(t *testing.T) {
 	// trailing backslash
-	if got, _ := toRE2(`a\`); !strings.Contains(got, `\\`) {
+	if got := toRE2(`a\`); !strings.Contains(got, `\\`) {
 		t.Fatalf("trailing backslash: %q", got)
 	}
 }

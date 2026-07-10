@@ -20,7 +20,7 @@ const re2Meta = `.+*?()|[]{}^$\`
 // Augeas dialect used by the corpus is a POSIX-ish ERE without back-references
 // or GNU operators; the main adjustments are dropping backslashes before
 // characters RE2 does not accept as escapes.
-func toRE2(p string) (string, error) {
+func toRE2(p string) string {
 	var b strings.Builder
 	i := 0
 	n := len(p)
@@ -76,7 +76,7 @@ func toRE2(p string) (string, error) {
 			i++
 		}
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 // translateClass copies a character class starting at p[start]=='[' and returns
@@ -331,6 +331,12 @@ func re2ClassEnd(p string, start int) int {
 		if p[i] == '\\' && i+1 < n {
 			i += 2
 			continue
+		}
+		if p[i] == '[' && i+1 < n && p[i+1] == ':' {
+			if j := posixClassEnd(p, i); j > 0 {
+				i = j
+				continue
+			}
 		}
 		if p[i] == ']' {
 			return i + 1

@@ -39,9 +39,8 @@ func TestToRE2(t *testing.T) {
 		`x++`:         `x+`,
 	}
 	for in, want := range cases {
-		got, err := toRE2(in)
-		if err != nil || got != want {
-			t.Fatalf("toRE2(%q)=%q,%v want %q", in, got, err, want)
+		if got := toRE2(in); got != want {
+			t.Fatalf("toRE2(%q)=%q want %q", in, got, want)
 		}
 	}
 }

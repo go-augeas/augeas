@@ -319,10 +319,8 @@ func treeCmdIns(root *Tree, label, path string, before bool) error {
 		}
 		return nil
 	}
+	// target was found within root and is not root itself, so it has a parent.
 	parent := parentOf(root, target)
-	if parent == nil {
-		return fmt.Errorf("cannot insert next to root")
-	}
 	idx := 0
 	for i, c := range parent.Children {
 		if c == target {

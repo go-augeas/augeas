@@ -16,9 +16,7 @@ func TestTranslateClassBranches(t *testing.T) {
 		`[^]a]`,        // negated with ']' first
 	}
 	for _, c := range cases {
-		if _, err := toRE2(c); err != nil {
-			t.Errorf("toRE2(%q): %v", c, err)
-		}
+		_ = toRE2(c)
 	}
 }
 

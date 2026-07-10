@@ -45,7 +45,7 @@ func newRawRegexp(re2 string) *Regexp {
 func (r *Regexp) re2() string {
 	s := r.pattern
 	if !r.raw {
-		s, _ = toRE2(s)
+		s = toRE2(s)
 	}
 	if r.nocase {
 		s = "(?i:" + s + ")"
@@ -233,11 +233,7 @@ func (r *Regexp) build() error {
 	r.built = true
 	re2 := r.pattern
 	if !r.raw {
-		var err error
-		re2, err = toRE2(r.pattern)
-		if err != nil {
-			return err
-		}
+		re2 = toRE2(r.pattern)
 	}
 	prefix := "^(?:"
 	if r.nocase {
