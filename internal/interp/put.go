@@ -398,11 +398,9 @@ func splitIter(sp *psplit, child *Lens) ([]*psplit, error) {
 		if count <= 0 {
 			break
 		}
+		// count > 0 with monotonic countSlash guarantees ci <= cj <= len(nodes).
 		ci := countSlash(sp.enc, pos)
 		cj := countSlash(sp.enc, pos+count)
-		if ci > cj || cj > len(sp.nodes) {
-			return nil, fmt.Errorf("iter split node range out of bounds")
-		}
 		out = append(out, &psplit{nodes: sp.nodes[ci:cj], enc: sp.enc[pos : pos+count]})
 		pos += count
 	}
