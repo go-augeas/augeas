@@ -217,3 +217,57 @@ func makeSquare(l1, l2, l3 *Lens) *Lens {
 }
 
 func (l *Lens) String() string { return fmt.Sprintf("lens(tag=%d)", l.tag) }
+
+// recomputeAtype rebuilds the tree-side types of a recursive lens after the
+// recursion knot is tied. A recursive lens's own atype is finite (recursion is
+// hidden inside subtree boundaries), so a single post-order pass — treating the
+// recursive placeholder as a leaf with its already-tied types — fixes the
+// concats that embed the placeholder (e.g. a block body `key . "{" . lns . "}"`
+// whose atype was built while the placeholder's atype was still empty).
+func recomputeAtype(l *Lens, seen map[*Lens]bool) {
+	if l == nil || seen[l] || l.tag == lRec {
+		return
+	}
+	seen[l] = true
+	for _, c := range l.children {
+		recomputeAtype(c, seen)
+	}
+	recomputeAtype(l.child, seen)
+
+	switch l.tag {
+	case lConcat:
+		l.atype = regexpConcatN(atypesOf(l.children))
+		l.ktype, l.vtype = nil, nil
+		for _, c := range l.children {
+			l.ktype = firstType(l.ktype, c.ktype)
+			l.vtype = firstType(l.vtype, c.vtype)
+		}
+	case lUnion:
+		l.atype = regexpUnionN(atypesOf(l.children))
+		l.ktype, l.vtype = nil, nil
+		for _, c := range l.children {
+			l.ktype = unionType(l.ktype, c.ktype)
+			l.vtype = unionType(l.vtype, c.vtype)
+		}
+	case lSubtree:
+		l.atype = subtreeAtype(l.child.ktype, l.child.vtype)
+	case lStar:
+		l.atype = regexpIter(l.child.atype, 0, -1)
+	case lMaybe:
+		l.atype = regexpMaybe(l.child.atype)
+		l.ktype = l.child.ktype
+		l.vtype = l.child.vtype
+	case lSquare:
+		l.atype = l.child.atype
+		l.ktype = l.child.ktype
+		l.vtype = l.child.vtype
+	}
+}
+
+func atypesOf(ls []*Lens) []*Regexp {
+	out := make([]*Regexp, len(ls))
+	for i, c := range ls {
+		out[i] = c.atype
+	}
+	return out
+}

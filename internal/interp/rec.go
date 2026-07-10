@@ -32,6 +32,13 @@ func (i *interp) evalRec(name string, exp term, e *env) (Value, error) {
 	placeholder.atype = l.lens.atype
 	placeholder.ktype = l.lens.ktype
 	placeholder.vtype = l.lens.vtype
+	// Recompute tree-side types now that the placeholder carries the resolved
+	// types, so concats that embed the placeholder (e.g. block bodies) get the
+	// correct atype for put.
+	recomputeAtype(l.lens, map[*Lens]bool{})
+	placeholder.atype = l.lens.atype
+	placeholder.ktype = l.lens.ktype
+	placeholder.vtype = l.lens.vtype
 	// Propagate recursiveness marker to the outer lens so get dispatches to
 	// getRec.
 	l.lens.recursive = true
