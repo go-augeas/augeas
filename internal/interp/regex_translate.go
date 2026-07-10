@@ -187,9 +187,6 @@ func restrictRE2(p string) string {
 // reserved bytes \x01-\x04, by decoding its member byte ranges, subtracting
 // [1,4], and re-emitting. cls includes the surrounding brackets.
 func clipReservedClass(cls string) string {
-	if len(cls) < 2 {
-		return cls
-	}
 	body := cls[1 : len(cls)-1]
 	ranges, posix := parseClassBody(body)
 	var out []byteRange

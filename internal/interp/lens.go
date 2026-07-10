@@ -4,8 +4,6 @@
 
 package interp
 
-import "fmt"
-
 type lensTag int
 
 const (
@@ -215,8 +213,6 @@ func makeSquare(l1, l2, l3 *Lens) *Lens {
 	l.recursive = inner.recursive
 	return l
 }
-
-func (l *Lens) String() string { return fmt.Sprintf("lens(tag=%d)", l.tag) }
 
 // recomputeAtype rebuilds the tree-side types of a recursive lens after the
 // recursion knot is tied. A recursive lens's own atype is finite (recursion is

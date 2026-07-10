@@ -45,9 +45,6 @@ func (a *alphabet) nsym() int { return len(a.cuts) - 1 }
 // symsForRange returns the symbol indices fully inside [lo,hi] (clamped to
 // 0..255).
 func (a *alphabet) symsForRange(lo, hi int) []int {
-	if lo < 0 {
-		lo = 0
-	}
 	if hi > 255 {
 		hi = 255
 	}
@@ -121,19 +118,19 @@ func buildNFA(re *syntax.Regexp, ab *alphabet) *nfa {
 	return n
 }
 
+// epsilonFrag returns a fragment that matches the empty string.
+func (n *nfa) epsilonFrag() frag {
+	s := n.newState()
+	a := n.newState()
+	n.addEdge(s, -1, a)
+	return frag{s, a}
+}
+
 func (n *nfa) build(re *syntax.Regexp, ab *alphabet) frag {
 	switch re.Op {
-	case syntax.OpEmptyMatch, syntax.OpBeginLine, syntax.OpEndLine,
-		syntax.OpBeginText, syntax.OpEndText, syntax.OpWordBoundary,
-		syntax.OpNoWordBoundary:
-		s := n.newState()
-		a := n.newState()
-		n.addEdge(s, -1, a)
-		return frag{s, a}
 	case syntax.OpNoMatch:
-		s := n.newState()
-		a := n.newState()
-		return frag{s, a} // no edge => rejects
+		// A fragment with no edge rejects everything.
+		return frag{n.newState(), n.newState()}
 	case syntax.OpLiteral:
 		return n.literalFrag(re.Rune, ab)
 	case syntax.OpCharClass:
@@ -152,9 +149,6 @@ func (n *nfa) build(re *syntax.Regexp, ab *alphabet) frag {
 	case syntax.OpCapture:
 		return n.build(re.Sub[0], ab)
 	case syntax.OpConcat:
-		if len(re.Sub) == 0 {
-			return n.build(&syntax.Regexp{Op: syntax.OpEmptyMatch}, ab)
-		}
 		f := n.build(re.Sub[0], ab)
 		for _, sub := range re.Sub[1:] {
 			g := n.build(sub, ab)
@@ -194,15 +188,11 @@ func (n *nfa) build(re *syntax.Regexp, ab *alphabet) frag {
 		n.addEdge(s, -1, a)
 		n.addEdge(g.accept, -1, a)
 		return frag{s, a}
-	case syntax.OpRepeat:
-		// Should be removed by Simplify; expand defensively.
-		return n.build(re.Sub[0], ab)
+	default:
+		// OpEmptyMatch, anchors, and any op that contributes no input symbols
+		// are treated as epsilon.
+		return n.epsilonFrag()
 	}
-	// Unknown op: treat as epsilon.
-	s := n.newState()
-	a := n.newState()
-	n.addEdge(s, -1, a)
-	return frag{s, a}
 }
 
 func (n *nfa) literalFrag(runes []rune, ab *alphabet) frag {
