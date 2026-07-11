@@ -12,6 +12,7 @@ ship a lens for:
     Rclone     (lens Rclone.lns)     rclone remotes:    rclone.conf
     Caddyfile  (lens Caddyfile.lns)  Caddy web server:  /etc/caddy/Caddyfile
     Nftables   (lens Nftables.lns)   nftables ruleset:  /etc/nftables.conf
+    Unbound    (lens Unbound.lns)    Unbound resolver:  /etc/unbound/unbound.conf
 
 Caddyfile heredocs (`<<MARKER`) and literal empty blocks (`dir { }`) are out of
 scope for a regular lens; heredocs are rejected at the go-augeas API layer

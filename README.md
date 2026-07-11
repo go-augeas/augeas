@@ -82,6 +82,7 @@ corpus **LGPL v2+** license, not this repo's BSD-3 (see `lenses/contrib/NOTICE`)
 | `Rclone.lns` | `rclone.conf` | 3/3 (1 get, 2 put) | one `[remote]` section each; verbatim to-EOL values so OAuth JSON token blobs survive. Caveat: a bare `key =` **empty value** does not round-trip through INI separator defaults (rclone normally omits empty options) |
 | `Caddyfile.lns` | `/etc/caddy/Caddyfile`, `/etc/caddy/conf.d/*` | 13/13 (10 get, 3 put) | native Caddyfile via one recursive subtree with an optional inner block (no per-keyword allow-list). Round-trips: nested directive blocks ✅, `@name` matchers ✅, `(snippet)` definitions ✅, leading global-options block (`@global`) ✅, `{placeholder}` tokens as opaque args ✅, quoted args ✅, comments ✅ |
 | `Nftables.lns` | `/etc/nftables.conf`, `/etc/nftables/*.nft`, `/etc/sysconfig/nftables.conf` | 11/11 (8 get, 3 put) | native nftables ruleset via the same recursive block pattern (`table` → `chain`/`set`/`map`/`flowtable` → rule lines). Round-trips: `table <family> <name>` blocks ✅, chain/set/map/flowtable blocks ✅, base-chain `type … hook … priority …; policy …;` line and rule lines as ordered verbatim `rule` nodes ✅, inline **anonymous sets** `{ 22, 80 }` and **verdict maps** `vmap { … }` as opaque rule text ✅, `define NAME = value` (structured) ✅, `include "…"` (structured) ✅, comments ✅ |
+| `Unbound.lns` | `/etc/unbound/unbound.conf`, `/etc/unbound/unbound.conf.d/*.conf` | 7/7 (3 get, 4 put) | Unbound resolver: colon-terminated clause headers (`server:`, `forward-zone:`, `remote-control:`, …) over indented `key: value` option lines, top-level `include:` directives and `#` comments. Repeated keys (`interface:`, `access-control:`, `local-data:`, `forward-addr:`, …) are an **ordered list of nodes**, so their order + multiplicity survive edit and append (not a map that collapses dups). Verbatim to-EOL values so quoted strings with spaces, CIDR+action, and `IP@port` round-trip. Indentation discriminates clause bodies from column-0 directives |
 
 **`Caddyfile.lns` boundaries (enforced / documented, never silently lossy):**
 
@@ -122,6 +123,24 @@ corpus **LGPL v2+** license, not this repo's BSD-3 (see `lenses/contrib/NOTICE`)
   lines`. (The lens' own inline boundary test still pins the raw misparse at the
   interpreter level, so the limitation stays visible.) Single-line lists
   (`elements = { a, b }`) are unaffected.
+
+**`Unbound.lns` boundaries (documented, never silently lossy):**
+
+- **No silent-misparse footgun, so no API guard.** Unlike a Caddyfile heredoc,
+  unbound.conf has no context-free / back-reference construct. Any input the
+  lens does not model (an option line with no enclosing clause, a bare
+  column-0 directive that is neither a known clause header nor `include:`, an
+  unknown clause keyword) fails `get` **loudly** instead of being silently
+  restructured. Two inline `get ... = *` tests pin this, so no `Parse`/`LoadFile`
+  rejection guard is required (contrast `Caddyfile.lns`).
+- **Inline trailing comments are not split.** A value is stored verbatim to the
+  end of the line, so `verbosity: 1  # note` keeps `1  # note` as the value
+  (it round-trips faithfully; the comment is simply not a separate node), the
+  same verbatim-value choice as `Wireguard.lns`/`Rclone.lns`.
+- **Clause bodies must be indented.** The lens uses indentation to tell a
+  clause option line (indented) from a top-level `include:`/clause header
+  (column 0) — the universal real-world convention; a de-indented option line
+  is rejected rather than misfiled.
 
 As a related differentiator, go-augeas' interpreted **`Toml.lns` put works**
 (its embedded put test passes in `TestCorpus`) where upstream Augeas' Toml
