@@ -249,7 +249,15 @@ func makeSquare(l1, l2, l3 *Lens) *Lens {
 	inner.consumesValue = l1.consumesValue || l2.consumesValue || l3.consumesValue
 	inner.recursive = l1.recursive || l2.recursive || l3.recursive
 	l := &Lens{tag: lSquare, child: inner}
-	l.ctype = inner.ctype
+	// Prefer the exact balanced-delimiter language (square_precise_type); fall
+	// back to the loose l1 . body . l3 concatenation when the delimiter language
+	// is infinite or too large. The child concat keeps the loose ctype, which
+	// get_square re-matches to locate the delimiter/body boundaries.
+	if precise := squarePreciseType(l1.ctype, l2.ctype); precise != nil {
+		l.ctype = precise
+	} else {
+		l.ctype = inner.ctype
+	}
 	l.atype = inner.atype
 	l.ktype = inner.ktype
 	l.vtype = inner.vtype
