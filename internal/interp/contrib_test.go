@@ -49,6 +49,7 @@ func TestContribCorpus(t *testing.T) {
 		{module: "Rclone", wantGet: 1, wantPut: 2},
 		{module: "Caddyfile", wantGet: 10, wantPut: 3},
 		{module: "Nftables", wantGet: 8, wantPut: 3},
+		{module: "Unbound", wantGet: 3, wantPut: 4},
 	}
 
 	for _, cl := range lenses {
