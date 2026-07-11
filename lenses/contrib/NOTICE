@@ -1,0 +1,30 @@
+go-augeas-original contrib lenses
+==================================
+
+The `.aug` files in this directory are **original lenses authored for
+go-augeas**. They are NOT part of the upstream Augeas distribution and must
+not be confused with the verbatim upstream mirror under `lenses/dist/`.
+
+They cover configuration formats that upstream Augeas 1.14.1 does not yet
+ship a lens for:
+
+    Wireguard  (lens Wireguard.lns)  WireGuard tunnels: /etc/wireguard/*.conf
+    Rclone     (lens Rclone.lns)     rclone remotes:    rclone.conf
+
+Each lens carries inline `test ... get ... =` / `test ... put ... after =`
+assertions that are run in CI (see internal/interp TestContribCorpus), exactly
+like the upstream corpus is gated on its own `test` assertions by TestCorpus.
+Their `Util`/`IniFile`/`Sep`/`Rx` imports resolve from the upstream
+`lenses/dist/` corpus.
+
+LICENSE
+-------
+
+These lens sources are licensed under the **GNU Lesser General Public
+License, version 2.1 or later** (see `../dist/LICENSE.lenses`), the same
+license as the upstream Augeas corpus, so that they compose with the corpus
+they import from. They keep their own LGPL header.
+
+This LGPL license applies ONLY to the `.aug` files under `lenses/`. The rest
+of the go-augeas/augeas repository (the pure-Go interpreter and API) is
+licensed under the BSD-3-Clause license (see the top-level `LICENSE`).

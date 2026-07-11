@@ -16,13 +16,26 @@ import (
 	"github.com/go-augeas/augeas/internal/interp"
 )
 
-// corpusFS embeds the upstream Augeas lens corpus (LGPL; see
-// lenses/dist/NOTICE) so the interpreter is fully self-contained.
+// corpusFS embeds the upstream Augeas 1.14.1 lens corpus (LGPL; see
+// lenses/dist/NOTICE) so the interpreter is fully self-contained. This tree is
+// a verbatim mirror of the upstream distribution and is never edited.
 //
 //go:embed lenses/dist/*.aug lenses/dist/tests/*.aug
 var corpusFS embed.FS
 
-// corpusSource resolves a module base name to its embedded .aug source.
+// contribFS embeds go-augeas-original lenses that go beyond the upstream
+// 1.14.1 corpus (currently Wireguard and Rclone). They are kept in a separate
+// embed and directory (lenses/contrib; see lenses/contrib/NOTICE) so they are
+// never confused with the verbatim upstream mirror. They carry the same LGPL
+// v2+ header as the corpus, not this package's BSD-3 license.
+//
+//go:embed lenses/contrib/*.aug
+var contribFS embed.FS
+
+// corpusSource resolves a module base name to its embedded .aug source, trying
+// the verbatim upstream mirror first and then the go-augeas-original contrib
+// lenses. Contrib lenses resolve their Util/IniFile/Sep/Rx imports from the
+// dist corpus through this same resolver.
 func corpusSource() interp.Source {
 	return func(base string) (string, bool) {
 		for _, p := range []string{
@@ -33,6 +46,9 @@ func corpusSource() interp.Source {
 			if err == nil {
 				return string(b), true
 			}
+		}
+		if b, err := contribFS.ReadFile("lenses/contrib/" + base + ".aug"); err == nil {
+			return string(b), true
 		}
 		return "", false
 	}
@@ -105,20 +121,30 @@ func (e *Engine) Lens(module, binding string) (Lens, error) {
 
 var moduleNameRe = regexp.MustCompile(`(?m)^module\s+(\w+)`)
 
-// corpusModuleNames returns the declared module name of every embedded dist
-// lens, computed once. Non-lens directory entries are skipped.
-var corpusModuleNames = sync.OnceValue(func() []string {
+// moduleNamesIn returns the declared module name of every .aug lens directly
+// under dir in fsys. Non-lens directory entries (such as the tests subdir) are
+// skipped.
+func moduleNamesIn(fsys embed.FS, dir string) []string {
 	var names []string
-	entries, _ := corpusFS.ReadDir("lenses/dist")
+	entries, _ := fsys.ReadDir(dir)
 	for _, ent := range entries {
 		if !strings.HasSuffix(ent.Name(), ".aug") {
 			continue
 		}
-		src, _ := corpusFS.ReadFile("lenses/dist/" + ent.Name())
+		src, _ := fsys.ReadFile(dir + "/" + ent.Name())
 		if m := moduleNameRe.FindSubmatch(src); m != nil {
 			names = append(names, string(m[1]))
 		}
 	}
+	return names
+}
+
+// corpusModuleNames returns the declared module name of every embedded lens,
+// computed once: the verbatim upstream dist corpus first, then the
+// go-augeas-original contrib lenses, so both are autoloadable by LoadFile.
+var corpusModuleNames = sync.OnceValue(func() []string {
+	names := moduleNamesIn(corpusFS, "lenses/dist")
+	names = append(names, moduleNamesIn(contribFS, "lenses/contrib")...)
 	return names
 })
 

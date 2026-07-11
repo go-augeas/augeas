@@ -60,6 +60,31 @@ Registered by name, each round-trips a canonical, newline-terminated text form:
 | `Shellvars`, `Simplevars` | `KEY=value` | one key per node, `#` comments |
 | `Ini`, `Keyvalue` | INI | `[section]` grouping, top-level keys, `#`/`;` comments |
 
+## Embedded lens corpus and go-augeas-original lenses
+
+Beyond the hand-written Go lenses above, the repository embeds the upstream
+Augeas **1.14.1** lens corpus as verbatim `.aug` DSL sources under
+`lenses/dist/` (LGPL v2+, see `lenses/dist/NOTICE`) and interprets them with a
+pure-Go engine (`NewEngine().Lens("Hosts", "lns")`). That corpus is a faithful
+mirror and is never edited; it is gated in CI by Augeas' own `test` assertions
+(`TestCorpus`: get 1533/1533, put 258/258).
+
+Alongside it, `lenses/contrib/` holds **go-augeas-original lenses** — lenses we
+wrote for formats upstream 1.14.1 does not cover. They live in a separate embed
+and directory so they are never confused with the upstream mirror, but they
+load and run like any other lens (importing `Util`/`IniFile`/`Sep`/`Rx` from the
+dist corpus) and are CI-gated the same way by `TestContribCorpus`. They keep the
+corpus **LGPL v2+** license, not this repo's BSD-3 (see `lenses/contrib/NOTICE`).
+
+| Lens | File | Coverage | Notes |
+|------|------|----------|-------|
+| `Wireguard.lns` | `/etc/wireguard/*.conf` | 4/4 (2 get, 2 put) | `[Interface]`/`[Peer]` INI; verbatim to-EOL values so base64 keys ending in `=`, comma-separated `AllowedIPs`, and `PostUp`/`PostDown` shell hooks with `;` round-trip |
+| `Rclone.lns` | `rclone.conf` | 3/3 (1 get, 2 put) | one `[remote]` section each; verbatim to-EOL values so OAuth JSON token blobs survive. Caveat: a bare `key =` **empty value** does not round-trip through INI separator defaults (rclone normally omits empty options) |
+
+As a related differentiator, go-augeas' interpreted **`Toml.lns` put works**
+(its embedded put test passes in `TestCorpus`) where upstream Augeas' Toml
+save/put is buggy (hercules-team/augeas issues #715, #699).
+
 ## Deferred (not yet implemented — honest scope)
 
 This is a faithful **starter** engine, not a drop-in replacement for upstream
