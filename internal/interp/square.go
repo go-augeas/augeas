@@ -71,10 +71,9 @@ func enumerate(r *Regexp, limit int) (words []string, ok bool) {
 			if nx < 0 {
 				continue
 			}
+			// interval bytes are always within [0,255] because the shared
+			// alphabet's cuts are capped at 256.
 			lo, hi := ab.interval(sym)
-			if hi > 255 {
-				hi = 255
-			}
 			for b := lo; b <= hi; b++ {
 				next := make([]byte, len(prefix)+1)
 				copy(next, prefix)

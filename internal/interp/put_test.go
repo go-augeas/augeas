@@ -38,12 +38,32 @@ func TestPutRoundtrips(t *testing.T) {
 		{` let lns = [ key /[a-z]+/ . del /=/ "=" . store /[0-9]+/ ] . del /\n/ "\n"`, "a=1\n"},
 		{` let lns = ( [ key /[a-z]+/ . del /=/ "=" . store /[0-9]+/ ] . del /\n/ "\n" )*`, "a=1\nb=2\n"},
 		{` let lns = [ label "x" . store /[0-9]+/ ]? . del /\n/ "\n"`, "5\n"},
-		{` let lns = [ label "x" . store /[0-9]+/ ]? . del /\n/ "\n"`, "\n"},
 		{` let lns = [ seq "s" . store /[0-9]+/ . del /,/ "," ]*`, "1,2,3,"},
 		{` let lns = [ del /#/ "#" . label "c" . store /[a-z]+/ ] | [ key /[a-z]+/ . del /=/ "=" . store /[a-z]+/ ]`, "#foo"},
 	}
 	for _, c := range cases {
 		roundtrip(t, compileLens(t, c.body), c.in)
+	}
+}
+
+// TestPutEmptyTree covers upstream's lns_put guard: putting an empty tree
+// (e.g. the maybe-absent get of "\n") emits nothing, matching real Augeas
+// (`if (tree == NULL) return;`), rather than reconstructing the skeleton.
+func TestPutEmptyTree(t *testing.T) {
+	l := compileLens(t, ` let lns = [ label "x" . store /[0-9]+/ ]? . del /\n/ "\n"`)
+	f, err := LnsGet(l, "\n")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(f) != 0 {
+		t.Fatalf("expected empty forest, got %d nodes", len(f))
+	}
+	out, err := LnsPut(l, f, "\n")
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if out != "" {
+		t.Fatalf("empty-tree put = %q, want %q", out, "")
 	}
 }
 

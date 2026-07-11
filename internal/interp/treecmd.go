@@ -150,15 +150,6 @@ func labelEq(t *Tree, label string) bool {
 	return *t.Label == label
 }
 
-func childValue(t *Tree, label string) (*string, bool) {
-	for _, c := range t.Children {
-		if labelEq(c, label) {
-			return c.Value, true
-		}
-	}
-	return nil, false
-}
-
 // findChildren returns the children of parent matching one path segment.
 func findChildren(parent *Tree, seg pathSeg) []*Tree {
 	var matched []*Tree
