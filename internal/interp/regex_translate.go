@@ -71,6 +71,29 @@ func toRE2(p string) string {
 			default:
 				b.WriteByte('+')
 			}
+		case '$':
+			// In the Augeas (POSIX ERE, context-dependent anchors) dialect, `$`
+			// is an end-of-line anchor only at the end of the (sub)expression —
+			// i.e. before `|`, `)`, or end of pattern — and is a literal dollar
+			// everywhere else. Augeas's `.` never matches `\n`, so the anchor is
+			// line-scoped; emit RE2's multiline `$` (non-capturing, to keep the
+			// group numbering 1:1).
+			if i+1 >= n || p[i+1] == '|' || p[i+1] == ')' {
+				b.WriteString(`(?m:$)`)
+			} else {
+				b.WriteString(`\$`)
+			}
+			i++
+		case '^':
+			// Symmetrically, `^` is a start-of-line anchor only at the start of a
+			// (sub)expression — the first character, or right after `(` or `|` —
+			// and a literal caret otherwise.
+			if i == 0 || p[i-1] == '(' || p[i-1] == '|' {
+				b.WriteString(`(?m:^)`)
+			} else {
+				b.WriteString(`\^`)
+			}
+			i++
 		default:
 			b.WriteByte(c)
 			i++
