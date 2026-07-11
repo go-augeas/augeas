@@ -88,6 +88,24 @@ means (100 000×, `-count=3`): **883 487 ns → 706 712 ns (1.25×; ratio vs C
 782 remaining groups; closing it fully needs non-capturing-group `nreg` rework
 or a per-branch union matcher (a deeper RE2-alternative), tracked as follow-up.
 
+**Update — non-capturing structural groups (same z15).** The follow-up above is
+now done: the register walk only reads a group at a leaf boundary
+(del/store/key text), a star/square span, a union branch, or a `maybe`, so every
+other wrapper — the many structural concat wrappers, the star iteration
+wrappers, and the empty label/value/seq/counter groups — is emitted as a
+non-capturing `(?:…)`. A capture-selective `regexpConcatCap`/`regexpUnionCap`
+pair drives this from an `ctypeCaptures` predicate, `regexpIter` wraps
+non-capturing, and the get/put walkers take a `wrapped` flag so `nreg` accounting
+stays exact (atype construction and the put-serialise walk are untouched). This
+cuts the compiled Sshd `ctype` from **782 → 463** capture groups (−40.8%).
+Paired same-session z15 means (100 000×, `-count=3`, medians): **737 594 ns →
+550 600 ns (1.34×; ratio vs C 4.8× → 3.6× slower)** against C Augeas 1.14.1 at
+153 798 ns/op, corpus compat unchanged at 1763/1791 (98.4%) and 100% coverage.
+The remaining gap is still the same mechanism — `runtime.memmove` in
+`machine.add` (≈75 % of profile) copying the now-463-int register array per NFA
+transition — so a further step must attack the copy itself (a per-branch union
+matcher, or matching without the full submatch machinery).
+
 The C reference harness used:
 
 ```c

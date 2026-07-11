@@ -54,12 +54,56 @@ type Lens struct {
 	consumesValue bool
 	recursive     bool
 
+	// fullCapture forces every child of this concat to receive a capturing
+	// wrapper group in the ctype, regardless of ctypeCaptures. It is set on a
+	// square's inner 3-way concat, whose get/put walk (getSquare/parseSquare)
+	// indexes each component's register directly.
+	fullCapture bool
+
 	// recursive placeholder resolution
 	body     *Lens // resolved body for lRec
 	resolved bool
 }
 
 func digitsRegexp() *Regexp { return newRegexp("[0-9]+", false) }
+
+// emptyCtype is the ctype of a lens whose concrete text is empty and never read
+// by the register walk (label/value/seq/counter). Unlike regexpMakeEmpty's "()"
+// it contributes no capture group, so it costs nothing in the register array.
+func emptyCtype() *Regexp { return newRegexp("", false) }
+
+// ctypeCaptures reports whether l, when embedded as a concat operand, needs a
+// capturing wrapper group in the parent's ctype — i.e. whether the get/put
+// register walk reads l's own wrapper. Three cases read it:
+//   - leaves that consume concrete text (del/store/key) read the matched text;
+//   - star/square read the wrapper's start/end to learn their text span before
+//     re-matching their child/inner-concat over it;
+//   - a subtree transparently forwards to whichever of the above it wraps.
+//
+// The remaining structural nodes (concat/union/maybe) have their wrapper walked
+// past without being read, so it can be non-capturing. Union branches are the
+// exception (always captured, so getUnion can tell which alternative matched)
+// and are handled by makeUnion directly.
+func ctypeCaptures(l *Lens) bool {
+	switch l.tag {
+	case lDel, lStore, lKey, lStar, lSquare:
+		return true
+	case lSubtree:
+		return ctypeCaptures(l.child)
+	default:
+		return false
+	}
+}
+
+// concatCaptureFlags returns, for each child of a concat, whether its ctype
+// wrapper is capturing. A fullCapture concat captures every child.
+func concatCaptureFlags(children []*Lens, full bool) []bool {
+	flags := make([]bool, len(children))
+	for i, c := range children {
+		flags[i] = full || ctypeCaptures(c)
+	}
+	return flags
+}
 
 // restrict removes the reserved encoding bytes from a key/value type so it
 // cannot span the encoded-tree separators during put. Raw (automata-produced)
@@ -84,7 +128,7 @@ func makePrim(tag lensTag, re *Regexp, str string) *Lens {
 	case lDel, lStore, lKey:
 		l.ctype = re
 	default: // label/value/seq/counter
-		l.ctype = regexpMakeEmpty()
+		l.ctype = emptyCtype()
 	}
 	switch tag {
 	case lKey:
@@ -166,7 +210,7 @@ func childAtypes(children []*Lens) []*Regexp {
 func makeConcat(l1, l2 *Lens) *Lens {
 	children := mergeChildren(flatOperands(l1, lConcat), flatOperands(l2, lConcat))
 	l := &Lens{tag: lConcat, children: children}
-	l.ctype = regexpConcatN(childCtypes(children))
+	l.ctype = regexpConcatCap(childCtypes(children), concatCaptureFlags(children, false))
 	l.atype = regexpConcatN(childAtypes(children))
 	l.ktype = firstType(l1.ktype, l2.ktype)
 	l.vtype = firstType(l1.vtype, l2.vtype)
@@ -241,7 +285,7 @@ func makeMaybe(c *Lens) *Lens {
 // matched by l1 and l3 must be identical (a balanced delimiter). Its child is a
 // flat 3-way concat, matching how upstream get_square walks the registers.
 func makeSquare(l1, l2, l3 *Lens) *Lens {
-	inner := &Lens{tag: lConcat, children: []*Lens{l1, l2, l3}}
+	inner := &Lens{tag: lConcat, children: []*Lens{l1, l2, l3}, fullCapture: true}
 	inner.ctype = regexpConcatN([]*Regexp{l1.ctype, l2.ctype, l3.ctype})
 	inner.atype = regexpConcatN([]*Regexp{l1.atype, l2.atype, l3.atype})
 	inner.ktype = firstType(firstType(l1.ktype, l2.ktype), l3.ktype)

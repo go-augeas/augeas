@@ -15,7 +15,7 @@ import (
 
 func TestGetLensErrGuard(t *testing.T) {
 	s := &getState{err: errors.New("preset"), regs: []int{0, 0}}
-	if got := getLens(&Lens{tag: lDel, ctype: regexpMakeEmpty()}, s); got != nil {
+	if got := getLens(&Lens{tag: lDel, ctype: regexpMakeEmpty()}, s, true); got != nil {
 		t.Error("getLens should return nil when s.err is set")
 	}
 }

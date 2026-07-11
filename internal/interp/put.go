@@ -84,14 +84,16 @@ func lnsParse(lens *Lens, text string) (*skel, *pdict, error) {
 	if _, err := initRegs(s, lens, len(text)); err != nil {
 		return nil, nil, err
 	}
-	sk, d := parseLens(lens, s)
+	sk, d := parseLens(lens, s, true)
 	if s.err != nil {
 		return nil, nil, s.err
 	}
 	return sk, d, nil
 }
 
-func parseLens(l *Lens, s *getState) (*skel, *pdict) {
+// parseLens mirrors getLens for the put parse phase; wrapped has the same
+// meaning (see getLens): whether s.nreg points at l's own capturing wrapper.
+func parseLens(l *Lens, s *getState, wrapped bool) (*skel, *pdict) {
 	if s.err != nil {
 		return nil, nil
 	}
@@ -126,15 +128,15 @@ func parseLens(l *Lens, s *getState) (*skel, *pdict) {
 		s.seqs[l.str] = 1
 		return &skel{tag: lCounter}, nil
 	case lConcat:
-		return parseConcat(l, s)
+		return parseConcat(l, s, wrapped)
 	case lUnion:
-		return parseUnion(l, s)
+		return parseUnion(l, s, wrapped)
 	case lSubtree:
-		return parseSubtree(l, s)
+		return parseSubtree(l, s, wrapped)
 	case lStar:
 		return parseStar(l, s)
 	case lMaybe:
-		return parseMaybe(l, s)
+		return parseMaybe(l, s, wrapped)
 	case lSquare:
 		return parseSquare(l, s)
 	}
@@ -142,35 +144,43 @@ func parseLens(l *Lens, s *getState) (*skel, *pdict) {
 	return nil, nil
 }
 
-func parseConcat(l *Lens, s *getState) (*skel, *pdict) {
+func parseConcat(l *Lens, s *getState, wrapped bool) (*skel, *pdict) {
 	sk := &skel{tag: lConcat}
 	var d *pdict
 	old := s.nreg
-	s.nreg++
+	if wrapped {
+		s.nreg++
+	}
 	for _, c := range l.children {
-		if !s.regValid() {
+		cap := l.fullCapture || ctypeCaptures(c)
+		if cap && !s.regValid() {
 			s.fail("not enough components in concat")
 			s.nreg = old
 			return sk, d
 		}
-		cs, cd := parseLens(c, s)
+		cs, cd := parseLens(c, s, cap)
 		sk.skels = append(sk.skels, cs)
 		d = dictAppend(d, cd)
-		s.nreg += 1 + c.ctype.nsub()
+		if cap {
+			s.nreg++
+		}
+		s.nreg += c.ctype.nsub()
 	}
 	s.nreg = old
 	return sk, d
 }
 
-func parseUnion(l *Lens, s *getState) (*skel, *pdict) {
+func parseUnion(l *Lens, s *getState, wrapped bool) (*skel, *pdict) {
 	old := s.nreg
-	s.nreg++
+	if wrapped {
+		s.nreg++
+	}
 	var sk *skel
 	var d *pdict
 	applied := false
 	for _, c := range l.children {
 		if s.regMatched() {
-			sk, d = parseLens(c, s)
+			sk, d = parseLens(c, s, true)
 			applied = true
 			break
 		}
@@ -183,10 +193,10 @@ func parseUnion(l *Lens, s *getState) (*skel, *pdict) {
 	return sk, d
 }
 
-func parseSubtree(l *Lens, s *getState) (*skel, *pdict) {
+func parseSubtree(l *Lens, s *getState, wrapped bool) (*skel, *pdict) {
 	key := s.key
 	s.key = nil
-	cs, cd := parseLens(l.child, s)
+	cs, cd := parseLens(l.child, s, wrapped)
 	d := makeDict(s.key, cs, cd)
 	s.key = key
 	return &skel{tag: lSubtree}, d
@@ -217,7 +227,7 @@ func parseStar(l *Lens, s *getState) (*skel, *pdict) {
 		}
 		s.regs = regs
 		s.nreg = 0
-		cs, cd := parseLens(l.child, s)
+		cs, cd := parseLens(l.child, s, true)
 		sk.skels = append(sk.skels, cs)
 		d = dictAppend(d, cd)
 		start += count
@@ -228,11 +238,13 @@ func parseStar(l *Lens, s *getState) (*skel, *pdict) {
 	return sk, d
 }
 
-func parseMaybe(l *Lens, s *getState) (*skel, *pdict) {
-	s.nreg++
-	defer func() { s.nreg-- }()
+func parseMaybe(l *Lens, s *getState, wrapped bool) (*skel, *pdict) {
+	if wrapped {
+		s.nreg++
+		defer func() { s.nreg-- }()
+	}
 	if s.regMatched() {
-		return parseLens(l.child, s)
+		return parseLens(l.child, s, true)
 	}
 	return &skel{tag: lMaybe}, nil
 }
@@ -254,7 +266,7 @@ func parseSquare(l *Lens, s *getState) (*skel, *pdict) {
 	}
 	s.regs = regs
 	s.nreg = 0
-	cs, cd := parseLens(concat, s)
+	cs, cd := parseLens(concat, s, true)
 	s.regs = oldRegs
 	s.nreg = oldNreg
 	return &skel{tag: lSquare, skels: []*skel{cs}}, cd

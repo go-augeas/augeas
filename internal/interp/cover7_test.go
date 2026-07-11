@@ -14,11 +14,11 @@ import (
 func TestDispatchDefaults(t *testing.T) {
 	bogus := &Lens{tag: lensTag(99), ctype: regexpMakeEmpty(), atype: regexpMakeEmpty()}
 	gs := &getState{text: "", regs: []int{0, 0}, seqs: map[string]int{}}
-	if getLens(bogus, gs); gs.err == nil {
+	if getLens(bogus, gs, true); gs.err == nil {
 		t.Error("getLens default")
 	}
 	ps := &getState{text: "", regs: []int{0, 0}, seqs: map[string]int{}}
-	if parseLens(bogus, ps); ps.err == nil {
+	if parseLens(bogus, ps, true); ps.err == nil {
 		t.Error("parseLens default")
 	}
 	var out strings.Builder
