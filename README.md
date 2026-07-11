@@ -80,6 +80,24 @@ corpus **LGPL v2+** license, not this repo's BSD-3 (see `lenses/contrib/NOTICE`)
 |------|------|----------|-------|
 | `Wireguard.lns` | `/etc/wireguard/*.conf` | 4/4 (2 get, 2 put) | `[Interface]`/`[Peer]` INI; verbatim to-EOL values so base64 keys ending in `=`, comma-separated `AllowedIPs`, and `PostUp`/`PostDown` shell hooks with `;` round-trip |
 | `Rclone.lns` | `rclone.conf` | 3/3 (1 get, 2 put) | one `[remote]` section each; verbatim to-EOL values so OAuth JSON token blobs survive. Caveat: a bare `key =` **empty value** does not round-trip through INI separator defaults (rclone normally omits empty options) |
+| `Caddyfile.lns` | `/etc/caddy/Caddyfile`, `/etc/caddy/conf.d/*` | 13/13 (10 get, 3 put) | native Caddyfile via one recursive subtree with an optional inner block (no per-keyword allow-list). Round-trips: nested directive blocks ✅, `@name` matchers ✅, `(snippet)` definitions ✅, leading global-options block (`@global`) ✅, `{placeholder}` tokens as opaque args ✅, quoted args ✅, comments ✅ |
+
+**`Caddyfile.lns` boundaries (enforced / documented, never silently lossy):**
+
+- **Heredocs are rejected, not misparsed.** A Caddyfile using a `<<MARKER`
+  here-document cannot be modelled by a regular lens — the closing token
+  repeats the opening word, a context-free construct Augeas regexps cannot
+  match. Rather than silently corrupt such a file (each body line would become
+  a bogus sibling directive), the go-augeas API layer **refuses** it:
+  `Engine.Lens("Caddyfile", "lns").Parse(...)` and `LoadFile` return
+  `Caddyfile heredocs unsupported by Caddyfile.lns` when the input opens a
+  heredoc. (The lens' own inline boundary test still pins the raw misparse at
+  the interpreter level, so the limitation stays visible.)
+- **Empty blocks `dir { }` are excluded.** A block body is deliberately
+  non-nullable so a bare directive `dir` never gains braces on put; the price
+  is that a literal empty brace pair fails `get`. Empty blocks are practically
+  never written in real Caddyfiles (a site or directive block always carries
+  directives).
 
 As a related differentiator, go-augeas' interpreted **`Toml.lns` put works**
 (its embedded put test passes in `TestCorpus`) where upstream Augeas' Toml

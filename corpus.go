@@ -74,9 +74,41 @@ type interpLens struct {
 	name string
 }
 
+// caddyfileHeredocRe matches a Caddyfile heredoc opener: an argument token
+// `<<MARKER` (optionally preceded by whitespace) whose bareword marker ends the
+// line, per Caddy's heredoc syntax. The closing token repeats the opening word,
+// a context-free / back-reference construct that a regular Augeas lens cannot
+// match, so Caddyfile.lns would SILENTLY MISPARSE such a file (each body line
+// becomes a bogus sibling directive). We refuse rather than corrupt.
+var caddyfileHeredocRe = regexp.MustCompile(`(?m)(^|[ \t])<<[A-Za-z_][A-Za-z0-9_]*[ \t]*\r?$`)
+
+// checkCaddyfileHeredoc rejects input that opens a heredoc, which Caddyfile.lns
+// cannot model (see caddyfileHeredocRe). It is enforced at this API boundary
+// (the entry for both Engine.Lens(...).Parse and LoadFile) rather than in the
+// interpreter, so the lens' own inline boundary test can still pin the raw
+// misparse. Returns nil for any input without a heredoc opener.
+func checkCaddyfileHeredoc(text string) error {
+	if caddyfileHeredocRe.MatchString(text) {
+		return fmt.Errorf("augeas: Caddyfile heredocs unsupported by Caddyfile.lns (`<<MARKER` here-documents cannot be modelled by a regular lens; refusing to avoid silent misparse)")
+	}
+	return nil
+}
+
+// isCaddyfileLens reports whether this lens is the go-augeas-original Caddyfile
+// lens, whose name is either "Caddyfile" (autoload) or "Caddyfile.lns" (direct
+// binding).
+func (l *interpLens) isCaddyfileLens() bool {
+	return l.name == "Caddyfile" || strings.HasPrefix(l.name, "Caddyfile.")
+}
+
 // Parse turns text into a synthetic parent node whose children are the parsed
 // entries, matching the [Lens] contract.
 func (l *interpLens) Parse(text string) (*Node, error) {
+	if l.isCaddyfileLens() {
+		if err := checkCaddyfileHeredoc(text); err != nil {
+			return nil, err
+		}
+	}
 	forest, err := interp.Get(l.lens, text)
 	if err != nil {
 		return nil, err
