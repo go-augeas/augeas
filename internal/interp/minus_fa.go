@@ -31,7 +31,14 @@ func faMinus(r1, r2 *Regexp) (*Regexp, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newRawRegexp(pat), nil
+	out := newRawRegexp(pat)
+	// The set difference of two case-fold-closed languages is itself
+	// case-fold-closed, so preserve the nocase flag when both operands are
+	// case-insensitive. Losing it here made a case-insensitive `square`
+	// delimiter (e.g. Httpd's `word - /perl/i`) fall back to an exact-case
+	// left/right comparison and reject `<IfModule>…</ifModule>`.
+	out.nocase = r1.nocase && r2.nocase
+	return out, nil
 }
 
 func parseForFA(r *Regexp) (*syntax.Regexp, error) {
