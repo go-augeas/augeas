@@ -189,18 +189,25 @@ func findChildren(parent *Tree, seg pathSeg) []*Tree {
 		}
 		return out
 	case predChild:
+		childSegs, err := parsePath(seg.child)
+		if err != nil || len(childSegs) == 0 {
+			return nil
+		}
 		var out []*Tree
 		for _, c := range matched {
-			v, ok := childValue(c, seg.child)
-			if !ok {
-				continue
-			}
-			if seg.childHas {
-				if v != nil && *v == seg.childVal {
+			// The child predicate is a relative path (possibly nested, e.g.
+			// time/minute); it holds when at least one addressed node exists
+			// (and, for [p = 'v'], has the required value).
+			for _, fn := range findNodes(c, childSegs) {
+				if seg.childHas {
+					if fn.Value != nil && *fn.Value == seg.childVal {
+						out = append(out, c)
+						break
+					}
+				} else {
 					out = append(out, c)
+					break
 				}
-			} else {
-				out = append(out, c)
 			}
 		}
 		return out
