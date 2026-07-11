@@ -56,19 +56,23 @@ func parsePath(p string) ([]pathSeg, error) {
 		if label == "*" {
 			seg.wildcard = true
 		}
-		seg.label = label
+		seg.label = unescapePathName(label)
 		segs = append(segs, seg)
 	}
 	return segs, nil
 }
 
-// splitPathParts splits on '/' but not inside [...] predicates.
+// splitPathParts splits on '/' but not inside [...] predicates, and treats a
+// backslash as escaping the next character (so an escaped '/', '[' or ']' in a
+// node name does not act as a separator).
 func splitPathParts(p string) []string {
 	var parts []string
 	depth := 0
 	start := 0
 	for i := 0; i < len(p); i++ {
 		switch p[i] {
+		case '\\':
+			i++ // skip the escaped character
 		case '[':
 			depth++
 		case ']':
@@ -84,6 +88,22 @@ func splitPathParts(p string) []string {
 	}
 	parts = append(parts, p[start:])
 	return parts
+}
+
+// unescapePathName removes one level of backslash escaping from a node name in
+// a path segment, so e.g. `hd2\,1` addresses the label `hd2,1`.
+func unescapePathName(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func parsePredicate(seg *pathSeg, pred string) {
