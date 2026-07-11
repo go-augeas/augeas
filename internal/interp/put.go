@@ -350,6 +350,13 @@ func LnsPut(lens *Lens, forest []*Tree, text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Upstream lns_put returns immediately, emitting nothing, when the tree is
+	// empty (`if (tree == NULL) return;`). This makes putting an emptied tree
+	// through a non-nullable lens yield the empty string rather than a schema
+	// error.
+	if len(forest) == 0 {
+		return "", nil
+	}
 	var out strings.Builder
 	s := &putState{
 		out:   &out,

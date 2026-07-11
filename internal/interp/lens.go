@@ -273,8 +273,12 @@ func makeMaybe(c *Lens) *Lens {
 	l := &Lens{tag: lMaybe, child: c}
 	l.ctype = regexpMaybe(c.ctype)
 	l.atype = regexpMaybe(c.atype)
-	l.ktype = c.ktype
-	l.vtype = c.vtype
+	// The key/value contributed by an optional lens are themselves optional, so
+	// a subtree whose value comes from a `?`-guarded store correctly admits an
+	// empty (absent) value. This mirrors lns_make_maybe applying regexp_maybe to
+	// every type, including ktype and vtype.
+	l.ktype = regexpMaybe(c.ktype)
+	l.vtype = regexpMaybe(c.vtype)
 	l.key = c.key
 	l.value = c.value
 	l.recursive = c.recursive
@@ -291,12 +295,24 @@ func makeSquare(l1, l2, l3 *Lens) *Lens {
 	inner.ktype = firstType(firstType(l1.ktype, l2.ktype), l3.ktype)
 	inner.vtype = firstType(firstType(l1.vtype, l2.vtype), l3.vtype)
 	inner.consumesValue = l1.consumesValue || l2.consumesValue || l3.consumesValue
+	inner.key = l1.key || l2.key || l3.key
+	inner.value = l1.value || l2.value || l3.value
 	inner.recursive = l1.recursive || l2.recursive || l3.recursive
 	l := &Lens{tag: lSquare, child: inner}
-	l.ctype = inner.ctype
+	// Prefer the exact balanced-delimiter language (square_precise_type); fall
+	// back to the loose l1 . body . l3 concatenation when the delimiter language
+	// is infinite or too large. The child concat keeps the loose ctype, which
+	// get_square re-matches to locate the delimiter/body boundaries.
+	if precise := squarePreciseType(l1.ctype, l2.ctype); precise != nil {
+		l.ctype = precise
+	} else {
+		l.ctype = inner.ctype
+	}
 	l.atype = inner.atype
 	l.ktype = inner.ktype
 	l.vtype = inner.vtype
+	l.key = inner.key
+	l.value = inner.value
 	l.consumesValue = inner.consumesValue
 	l.recursive = inner.recursive
 	return l
@@ -339,8 +355,8 @@ func recomputeAtype(l *Lens, seen map[*Lens]bool) {
 		l.atype = regexpIter(l.child.atype, 0, -1)
 	case lMaybe:
 		l.atype = regexpMaybe(l.child.atype)
-		l.ktype = l.child.ktype
-		l.vtype = l.child.vtype
+		l.ktype = regexpMaybe(l.child.ktype)
+		l.vtype = regexpMaybe(l.child.vtype)
 	case lSquare:
 		l.atype = l.child.atype
 		l.ktype = l.child.ktype

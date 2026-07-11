@@ -56,19 +56,23 @@ func parsePath(p string) ([]pathSeg, error) {
 		if label == "*" {
 			seg.wildcard = true
 		}
-		seg.label = label
+		seg.label = unescapePathName(label)
 		segs = append(segs, seg)
 	}
 	return segs, nil
 }
 
-// splitPathParts splits on '/' but not inside [...] predicates.
+// splitPathParts splits on '/' but not inside [...] predicates, and treats a
+// backslash as escaping the next character (so an escaped '/', '[' or ']' in a
+// node name does not act as a separator).
 func splitPathParts(p string) []string {
 	var parts []string
 	depth := 0
 	start := 0
 	for i := 0; i < len(p); i++ {
 		switch p[i] {
+		case '\\':
+			i++ // skip the escaped character
 		case '[':
 			depth++
 		case ']':
@@ -84,6 +88,22 @@ func splitPathParts(p string) []string {
 	}
 	parts = append(parts, p[start:])
 	return parts
+}
+
+// unescapePathName removes one level of backslash escaping from a node name in
+// a path segment, so e.g. `hd2\,1` addresses the label `hd2,1`.
+func unescapePathName(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func parsePredicate(seg *pathSeg, pred string) {
@@ -130,15 +150,6 @@ func labelEq(t *Tree, label string) bool {
 	return *t.Label == label
 }
 
-func childValue(t *Tree, label string) (*string, bool) {
-	for _, c := range t.Children {
-		if labelEq(c, label) {
-			return c.Value, true
-		}
-	}
-	return nil, false
-}
-
 // findChildren returns the children of parent matching one path segment.
 func findChildren(parent *Tree, seg pathSeg) []*Tree {
 	var matched []*Tree
@@ -169,18 +180,25 @@ func findChildren(parent *Tree, seg pathSeg) []*Tree {
 		}
 		return out
 	case predChild:
+		childSegs, err := parsePath(seg.child)
+		if err != nil || len(childSegs) == 0 {
+			return nil
+		}
 		var out []*Tree
 		for _, c := range matched {
-			v, ok := childValue(c, seg.child)
-			if !ok {
-				continue
-			}
-			if seg.childHas {
-				if v != nil && *v == seg.childVal {
+			// The child predicate is a relative path (possibly nested, e.g.
+			// time/minute); it holds when at least one addressed node exists
+			// (and, for [p = 'v'], has the required value).
+			for _, fn := range findNodes(c, childSegs) {
+				if seg.childHas {
+					if fn.Value != nil && *fn.Value == seg.childVal {
+						out = append(out, c)
+						break
+					}
+				} else {
 					out = append(out, c)
+					break
 				}
-			} else {
-				out = append(out, c)
 			}
 		}
 		return out

@@ -7,7 +7,21 @@ package interp
 import (
 	"regexp/syntax"
 	"sort"
+	"unicode"
 )
+
+// foldVariants returns r together with all of its Unicode simple-case-fold
+// equivalents. The standard library's parser normalises a case-insensitive
+// literal to a single (upper-cased) rune sequence and defers the folding to a
+// FoldCase flag, so the automata builders below must re-expand it to match the
+// behaviour of the RE2 matcher (and of upstream's regexp_expand_nocase).
+func foldVariants(r rune) []rune {
+	out := []rune{r}
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		out = append(out, f)
+	}
+	return out
+}
 
 // This file implements the finite-automata machinery Augeas needs for regexp
 // subtraction (the `-` operator). Upstream computes r1 - r2 as r1 ∩ ¬r2 over a
@@ -68,12 +82,19 @@ func addBound(set map[int]struct{}, lo, hi int) {
 func collectBounds(re *syntax.Regexp, set map[int]struct{}) {
 	switch re.Op {
 	case syntax.OpLiteral:
+		fold := re.Flags&syntax.FoldCase != 0
 		for _, r := range re.Rune {
-			if r < 256 {
-				addBound(set, int(r), int(r))
-			} else {
-				for _, b := range []byte(string(r)) {
-					addBound(set, int(b), int(b))
+			variants := []rune{r}
+			if fold {
+				variants = foldVariants(r)
+			}
+			for _, v := range variants {
+				if v < 256 {
+					addBound(set, int(v), int(v))
+				} else {
+					for _, b := range []byte(string(v)) {
+						addBound(set, int(b), int(b))
+					}
 				}
 			}
 		}
@@ -129,7 +150,7 @@ func (n *nfa) epsilonFrag() frag {
 func (n *nfa) build(re *syntax.Regexp, ab *alphabet) frag {
 	switch re.Op {
 	case syntax.OpLiteral:
-		return n.literalFrag(re.Rune, ab)
+		return n.literalFrag(re.Rune, ab, re.Flags&syntax.FoldCase != 0)
 	case syntax.OpCharClass:
 		var syms []int
 		for i := 0; i+1 < len(re.Rune); i += 2 {
@@ -192,27 +213,46 @@ func (n *nfa) build(re *syntax.Regexp, ab *alphabet) frag {
 	}
 }
 
-func (n *nfa) literalFrag(runes []rune, ab *alphabet) frag {
+func (n *nfa) literalFrag(runes []rune, ab *alphabet, fold bool) frag {
 	s := n.newState()
 	cur := s
 	for _, r := range runes {
-		if r < 256 {
-			nx := n.newState()
-			for _, sym := range ab.symsForRange(int(r), int(r)) {
-				n.addEdge(cur, sym, nx)
-			}
-			cur = nx
-		} else {
-			for _, b := range []byte(string(r)) {
-				nx := n.newState()
-				for _, sym := range ab.symsForRange(int(b), int(b)) {
-					n.addEdge(cur, sym, nx)
-				}
-				cur = nx
-			}
+		variants := []rune{r}
+		if fold {
+			variants = foldVariants(r)
 		}
+		nx := n.newState()
+		for _, v := range variants {
+			n.addLiteralRune(cur, nx, v, ab)
+		}
+		cur = nx
 	}
 	return frag{s, cur}
+}
+
+// addLiteralRune wires a path from -> to spelling the single rune v (as its
+// UTF-8 byte sequence over the shared alphabet). Each fold variant of a
+// case-insensitive literal is added as a parallel path, so multibyte variants
+// of differing lengths compose correctly.
+func (n *nfa) addLiteralRune(from, to int, v rune, ab *alphabet) {
+	if v < 256 {
+		for _, sym := range ab.symsForRange(int(v), int(v)) {
+			n.addEdge(from, sym, to)
+		}
+		return
+	}
+	bytes := []byte(string(v))
+	cur := from
+	for i, b := range bytes {
+		nx := to
+		if i < len(bytes)-1 {
+			nx = n.newState()
+		}
+		for _, sym := range ab.symsForRange(int(b), int(b)) {
+			n.addEdge(cur, sym, nx)
+		}
+		cur = nx
+	}
 }
 
 func (n *nfa) symsFrag(syms []int) frag {

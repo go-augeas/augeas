@@ -53,7 +53,13 @@ func TestTreeCmds(t *testing.T) {
 	if err := treeCmdSet(r, "/new/deep", "z"); err != nil {
 		t.Fatalf("set create: %v", err)
 	}
-	if v, _ := childValue(r.Children[3], "deep"); v == nil || *v != "z" {
+	var deep *string
+	for _, c := range r.Children[3].Children {
+		if c.Label != nil && *c.Label == "deep" {
+			deep = c.Value
+		}
+	}
+	if deep == nil || *deep != "z" {
 		t.Fatal("nested create")
 	}
 	if err := treeCmdClear(r, "/a[1]"); err != nil || r.Children[0].Value != nil {
