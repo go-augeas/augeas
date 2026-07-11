@@ -147,3 +147,55 @@ func TestCaddyfileHeredocGuard(t *testing.T) {
 		t.Fatalf("non-heredoc input flagged: %v", err)
 	}
 }
+
+// TestNftablesLineWrapGuard verifies the API-boundary rejection of nftables
+// rulesets whose brace groups wrap across physical lines (which Nftables.lns
+// would silently misparse into bogus sibling rule nodes), and that every
+// legitimate line shape is accepted.
+func TestNftablesLineWrapGuard(t *testing.T) {
+	const normal = "table inet filter {\n\tchain input {\n\t\ttype filter hook input priority 0; policy drop;\n\t\ttcp dport { 22, 80 } accept\n\t}\n}\n"
+	// nft-wrapped element list: the "{" on the elements line is not closed on
+	// the same line.
+	const wrapOpen = "table ip filter {\n\tset big {\n\t\telements = { 10.0.0.1,\n\t\t\t     10.0.0.2 }\n\t}\n}\n"
+
+	l, err := NewEngine().Lens("Nftables", "lns")
+	if err != nil {
+		t.Fatalf("lens: %v", err)
+	}
+	if _, err := l.Parse(wrapOpen); err == nil {
+		t.Fatal("wrapped element-list opener must be rejected by Parse")
+	}
+	if _, err := l.Parse(normal); err != nil {
+		t.Fatalf("normal ruleset must parse: %v", err)
+	}
+
+	// Autoload / LoadFile path: lens name == "Nftables".
+	a := New()
+	a.SetFileSystem(memFSc{files: map[string]string{"/etc/nftables.conf": wrapOpen}})
+	if err := a.LoadFile("/etc/nftables.conf"); err == nil {
+		t.Fatal("LoadFile must reject a wrapped nftables ruleset")
+	}
+	a2 := New()
+	a2.SetFileSystem(memFSc{files: map[string]string{"/etc/nftables.conf": normal}})
+	if err := a2.LoadFile("/etc/nftables.conf"); err != nil {
+		t.Fatalf("LoadFile must parse a normal ruleset: %v", err)
+	}
+	if v, _ := a2.Get("/files/etc/nftables.conf/table/name"); v != "filter" {
+		t.Fatalf("parsed table name = %q, want filter", v)
+	}
+
+	// Direct guard checks of the accept branches: blank lines, a comment-only
+	// line (dropped at "#"), a lone closer "}", a balanced inline set, and a
+	// block opener ending in "{" must all pass.
+	if err := checkNftablesLineWrap("\n# a comment with { and } inside\ntable inet f {\n\ttcp dport { 22, 80 } accept\n}\n"); err != nil {
+		t.Fatalf("legitimate lines flagged: %v", err)
+	}
+	// More than one unmatched "{" on a line is also a wrap (depth > 1).
+	if err := checkNftablesLineWrap("a { b {\n"); err == nil {
+		t.Fatal("a line with two unmatched { must be rejected")
+	}
+	// A stray "}" continuing a previous line (depth goes negative) is rejected.
+	if err := checkNftablesLineWrap("10.0.0.2 } accept\n"); err == nil {
+		t.Fatal("a line continuing a brace group with a stray } must be rejected")
+	}
+}
