@@ -101,11 +101,79 @@ func (l *interpLens) isCaddyfileLens() bool {
 	return l.name == "Caddyfile" || strings.HasPrefix(l.name, "Caddyfile.")
 }
 
+// isNftablesLens reports whether this lens is the go-augeas-original Nftables
+// lens, whose name is either "Nftables" (autoload) or "Nftables.lns" (direct
+// binding).
+func (l *interpLens) isNftablesLens() bool {
+	return l.name == "Nftables" || strings.HasPrefix(l.name, "Nftables.")
+}
+
+// checkNftablesLineWrap rejects an nftables ruleset in which a brace group is
+// wrapped across more than one physical line, which Nftables.lns cannot model.
+// The lens reads each physical line on its own and tells a block opener
+// (a line whose last non-blank character is "{") apart from a rule that merely
+// contains an inline anonymous set (`{ 22, 80 }`, closed on the same line). An
+// element/value list that nft wraps -- `elements = { a,` on one line, `b }` on
+// the next -- would therefore SILENTLY MISPARSE into two bogus sibling "rule"
+// nodes (a get succeeds with a wrong tree). We refuse rather than corrupt, at
+// this API boundary, so the lens' own inline boundary test can still pin the
+// raw misparse.
+//
+// A line is accepted when, after stripping a trailing "#" comment, it is: blank,
+// a lone block closer "}", brace-balanced (every inline `{...}` closed on the
+// line), or a block opener (exactly one unmatched "{" and it is the last
+// non-blank character). Anything else -- an inline "{" left open mid-line, a
+// stray "}" continuing a previous line, or more than one unmatched "{" -- is a
+// wrap and is rejected.
+func checkNftablesLineWrap(text string) error {
+	for n, raw := range strings.Split(text, "\n") {
+		line := raw
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i] // drop trailing comment
+		}
+		line = strings.TrimRight(line, " \t\r")
+		trimmed := strings.TrimLeft(line, " \t")
+		if trimmed == "" || trimmed == "}" {
+			continue // blank / comment-only line, or a block closer
+		}
+		depth := 0
+		neg := false
+		for _, c := range line {
+			switch c {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth < 0 {
+					neg = true // a "}" with no matching "{" on this line
+				}
+			}
+		}
+		if neg {
+			return fmt.Errorf("augeas: nftables line %d continues a brace group from a previous line; Nftables.lns cannot model brace groups wrapped across physical lines (refusing to avoid silent misparse)", n+1)
+		}
+		switch {
+		case depth == 0:
+			// every inline brace group closed on this line: fine
+		case depth == 1 && strings.HasSuffix(line, "{"):
+			// a block opener: the sole unmatched "{" ends the line
+		default:
+			return fmt.Errorf("augeas: nftables line %d opens a brace group it does not close on the same line; Nftables.lns cannot model brace groups wrapped across physical lines (refusing to avoid silent misparse)", n+1)
+		}
+	}
+	return nil
+}
+
 // Parse turns text into a synthetic parent node whose children are the parsed
 // entries, matching the [Lens] contract.
 func (l *interpLens) Parse(text string) (*Node, error) {
 	if l.isCaddyfileLens() {
 		if err := checkCaddyfileHeredoc(text); err != nil {
+			return nil, err
+		}
+	}
+	if l.isNftablesLens() {
+		if err := checkNftablesLineWrap(text); err != nil {
 			return nil, err
 		}
 	}

@@ -81,6 +81,7 @@ corpus **LGPL v2+** license, not this repo's BSD-3 (see `lenses/contrib/NOTICE`)
 | `Wireguard.lns` | `/etc/wireguard/*.conf` | 4/4 (2 get, 2 put) | `[Interface]`/`[Peer]` INI; verbatim to-EOL values so base64 keys ending in `=`, comma-separated `AllowedIPs`, and `PostUp`/`PostDown` shell hooks with `;` round-trip |
 | `Rclone.lns` | `rclone.conf` | 3/3 (1 get, 2 put) | one `[remote]` section each; verbatim to-EOL values so OAuth JSON token blobs survive. Caveat: a bare `key =` **empty value** does not round-trip through INI separator defaults (rclone normally omits empty options) |
 | `Caddyfile.lns` | `/etc/caddy/Caddyfile`, `/etc/caddy/conf.d/*` | 13/13 (10 get, 3 put) | native Caddyfile via one recursive subtree with an optional inner block (no per-keyword allow-list). Round-trips: nested directive blocks ✅, `@name` matchers ✅, `(snippet)` definitions ✅, leading global-options block (`@global`) ✅, `{placeholder}` tokens as opaque args ✅, quoted args ✅, comments ✅ |
+| `Nftables.lns` | `/etc/nftables.conf`, `/etc/nftables/*.nft`, `/etc/sysconfig/nftables.conf` | 11/11 (8 get, 3 put) | native nftables ruleset via the same recursive block pattern (`table` → `chain`/`set`/`map`/`flowtable` → rule lines). Round-trips: `table <family> <name>` blocks ✅, chain/set/map/flowtable blocks ✅, base-chain `type … hook … priority …; policy …;` line and rule lines as ordered verbatim `rule` nodes ✅, inline **anonymous sets** `{ 22, 80 }` and **verdict maps** `vmap { … }` as opaque rule text ✅, `define NAME = value` (structured) ✅, `include "…"` (structured) ✅, comments ✅ |
 
 **`Caddyfile.lns` boundaries (enforced / documented, never silently lossy):**
 
@@ -98,6 +99,29 @@ corpus **LGPL v2+** license, not this repo's BSD-3 (see `lenses/contrib/NOTICE`)
   is that a literal empty brace pair fails `get`. Empty blocks are practically
   never written in real Caddyfiles (a site or directive block always carries
   directives).
+
+**`Nftables.lns` boundaries (enforced / documented, never silently lossy):**
+
+- **Rule expressions are stored verbatim, not fully parsed.** A base-chain
+  setting line (`type filter hook input priority 0; policy drop;`) and every
+  rule (`ip saddr @blocklist tcp dport { 22, 80 } accept`) become ordered
+  `rule` nodes holding the exact line text. The block structure `table →
+  chain/set/map/flowtable` is parsed (family, name), but the packet-match /
+  verdict grammar inside a rule — including inline **anonymous sets**
+  `{ 22, 80 }`, **verdict maps** `vmap { … }`, ranges and concatenations — is
+  kept as opaque text. This is by design: it round-trips faithfully without a
+  full nft expression grammar. `define`/`include` get light structure.
+- **Line-wrapped brace groups are rejected, not misparsed.** `nft list ruleset`
+  may wrap a long list across physical lines (`elements = { a,` on one line,
+  `b }` on the next). The lens reads each physical line on its own — a line
+  ending in `{` is a block opener, a line with an inline `{ … }` closed on the
+  same line is a rule — so a wrapped group would **silently misparse** into two
+  bogus sibling `rule` nodes. Rather than corrupt such a file, the go-augeas API
+  layer **refuses** it: `Engine.Lens("Nftables", "lns").Parse(...)` and
+  `LoadFile` return `nftables line N … brace groups wrapped across physical
+  lines`. (The lens' own inline boundary test still pins the raw misparse at the
+  interpreter level, so the limitation stays visible.) Single-line lists
+  (`elements = { a, b }`) are unaffected.
 
 As a related differentiator, go-augeas' interpreted **`Toml.lns` put works**
 (its embedded put test passes in `TestCorpus`) where upstream Augeas' Toml

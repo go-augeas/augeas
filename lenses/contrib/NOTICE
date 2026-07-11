@@ -11,10 +11,14 @@ ship a lens for:
     Wireguard  (lens Wireguard.lns)  WireGuard tunnels: /etc/wireguard/*.conf
     Rclone     (lens Rclone.lns)     rclone remotes:    rclone.conf
     Caddyfile  (lens Caddyfile.lns)  Caddy web server:  /etc/caddy/Caddyfile
+    Nftables   (lens Nftables.lns)   nftables ruleset:  /etc/nftables.conf
 
 Caddyfile heredocs (`<<MARKER`) and literal empty blocks (`dir { }`) are out of
 scope for a regular lens; heredocs are rejected at the go-augeas API layer
-rather than silently misparsed. See the README for the full boundary notes.
+rather than silently misparsed. Nftables brace groups wrapped across multiple
+physical lines (a long `elements = { a,` / `b }` list as nft may print it) are
+likewise rejected at the API layer rather than silently misparsed. See the
+README for the full boundary notes.
 
 Each lens carries inline `test ... get ... =` / `test ... put ... after =`
 assertions that are run in CI (see internal/interp TestContribCorpus), exactly
