@@ -47,6 +47,7 @@ func TestContribCorpus(t *testing.T) {
 	lenses := []contribLens{
 		{module: "Wireguard", wantGet: 2, wantPut: 2},
 		{module: "Rclone", wantGet: 1, wantPut: 2},
+		{module: "Caddyfile", wantGet: 10, wantPut: 3},
 	}
 
 	for _, cl := range lenses {

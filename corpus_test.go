@@ -105,3 +105,45 @@ func (m memFSc) WriteFile(n string, d []byte, _ fs.FileMode) error {
 	return nil
 }
 func (m memFSc) Glob(string) ([]string, error) { return nil, nil }
+
+// TestCaddyfileHeredocGuard verifies the API-boundary rejection of Caddyfile
+// heredocs, which Caddyfile.lns cannot model and would otherwise silently
+// misparse. Both entry points (direct Engine.Lens Parse and the LoadFile
+// autoload path) must refuse a heredoc file and accept a normal one.
+func TestCaddyfileHeredocGuard(t *testing.T) {
+	const heredoc = "example.com {\n\trespond <<HTML\n\t<h1>hi</h1>\n\tHTML 200\n}\n"
+	const normal = "example.com {\n\treverse_proxy localhost:8080\n}\n"
+
+	// Direct-binding path: lens name == "Caddyfile.lns".
+	l, err := NewEngine().Lens("Caddyfile", "lns")
+	if err != nil {
+		t.Fatalf("lens: %v", err)
+	}
+	if _, err := l.Parse(heredoc); err == nil {
+		t.Fatal("heredoc input must be rejected by Parse")
+	}
+	if _, err := l.Parse(normal); err != nil {
+		t.Fatalf("normal input must parse: %v", err)
+	}
+
+	// Autoload / LoadFile path: lens name == "Caddyfile".
+	a := New()
+	a.SetFileSystem(memFSc{files: map[string]string{"/etc/caddy/Caddyfile": heredoc}})
+	if err := a.LoadFile("/etc/caddy/Caddyfile"); err == nil {
+		t.Fatal("LoadFile must reject a heredoc Caddyfile")
+	}
+	a2 := New()
+	a2.SetFileSystem(memFSc{files: map[string]string{"/etc/caddy/Caddyfile": normal}})
+	if err := a2.LoadFile("/etc/caddy/Caddyfile"); err != nil {
+		t.Fatalf("LoadFile must parse a normal Caddyfile: %v", err)
+	}
+	if v, _ := a2.Get("/files/etc/caddy/Caddyfile/example.com/reverse_proxy/arg"); v != "localhost:8080" {
+		t.Fatalf("parsed arg = %q, want localhost:8080", v)
+	}
+
+	// The guard is scoped to the Caddyfile lens: a `<<` opener in another
+	// lens' input is not spuriously rejected.
+	if err := checkCaddyfileHeredoc("plain config, no heredoc\n"); err != nil {
+		t.Fatalf("non-heredoc input flagged: %v", err)
+	}
+}
