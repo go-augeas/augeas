@@ -55,7 +55,7 @@ func LnsGet(lens *Lens, text string) ([]*Tree, error) {
 	if err != nil {
 		return nil, err
 	}
-	forest := getLens(lens, s)
+	forest := getLens(lens, s, true)
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -89,7 +89,13 @@ func initRegs(s *getState, lens *Lens, size int) (bool, error) {
 	return false, nil
 }
 
-func getLens(l *Lens, s *getState) []*Tree {
+// getLens walks lens l over the register array. wrapped reports whether s.nreg
+// currently points at l's own capturing wrapper group — true when a parent
+// concat/union captured l (leaf, union branch, square component) or l is the
+// whole match; false when a parent concat spliced l in structurally without a
+// wrapper. Composites skip their wrapper (s.nreg++) only when wrapped; leaves
+// read it directly.
+func getLens(l *Lens, s *getState, wrapped bool) []*Tree {
 	if s.err != nil {
 		return nil
 	}
@@ -131,15 +137,15 @@ func getLens(l *Lens, s *getState) []*Tree {
 		s.seqs[l.str] = 1
 		return nil
 	case lConcat:
-		return getConcat(l, s)
+		return getConcat(l, s, wrapped)
 	case lUnion:
-		return getUnion(l, s)
+		return getUnion(l, s, wrapped)
 	case lSubtree:
-		return getSubtree(l, s)
+		return getSubtree(l, s, wrapped)
 	case lStar:
 		return getStar(l, s)
 	case lMaybe:
-		return getMaybe(l, s)
+		return getMaybe(l, s, wrapped)
 	case lSquare:
 		return getSquare(l, s)
 	default:
@@ -148,31 +154,42 @@ func getLens(l *Lens, s *getState) []*Tree {
 	}
 }
 
-func getConcat(l *Lens, s *getState) []*Tree {
+func getConcat(l *Lens, s *getState, wrapped bool) []*Tree {
 	var out []*Tree
 	oldNreg := s.nreg
-	s.nreg++
+	if wrapped {
+		s.nreg++
+	}
 	for _, c := range l.children {
-		if !s.regValid() {
+		cap := l.fullCapture || ctypeCaptures(c)
+		// Only a capturing child indexes s.nreg into the register array; a
+		// structural (non-capturing) child may legitimately leave s.nreg past
+		// the last group, so the range check applies only when cap.
+		if cap && !s.regValid() {
 			s.fail("not enough components in concat")
 			s.nreg = oldNreg
 			return nil
 		}
-		out = append(out, getLens(c, s)...)
-		s.nreg += 1 + c.ctype.nsub()
+		out = append(out, getLens(c, s, cap)...)
+		if cap {
+			s.nreg++
+		}
+		s.nreg += c.ctype.nsub()
 	}
 	s.nreg = oldNreg
 	return out
 }
 
-func getUnion(l *Lens, s *getState) []*Tree {
+func getUnion(l *Lens, s *getState, wrapped bool) []*Tree {
 	oldNreg := s.nreg
-	s.nreg++
+	if wrapped {
+		s.nreg++
+	}
 	var out []*Tree
 	applied := false
 	for _, c := range l.children {
 		if s.regMatched() {
-			out = getLens(c, s)
+			out = getLens(c, s, true)
 			applied = true
 			break
 		}
@@ -185,12 +202,12 @@ func getUnion(l *Lens, s *getState) []*Tree {
 	return out
 }
 
-func getSubtree(l *Lens, s *getState) []*Tree {
+func getSubtree(l *Lens, s *getState, wrapped bool) []*Tree {
 	key := s.key
 	val := s.val
 	s.key = nil
 	s.val = nil
-	children := getLens(l.child, s)
+	children := getLens(l.child, s, wrapped)
 	node := &Tree{Label: s.key, Value: s.val, Children: children}
 	s.key = key
 	s.val = val
@@ -223,7 +240,7 @@ func getStar(l *Lens, s *getState) []*Tree {
 		}
 		s.regs = regs
 		s.nreg = 0
-		out = append(out, getLens(l.child, s)...)
+		out = append(out, getLens(l.child, s, true)...)
 		start += count
 		size -= count
 	}
@@ -236,13 +253,17 @@ func getStar(l *Lens, s *getState) []*Tree {
 	return out
 }
 
-func getMaybe(l *Lens, s *getState) []*Tree {
-	s.nreg++
+func getMaybe(l *Lens, s *getState, wrapped bool) []*Tree {
+	if wrapped {
+		s.nreg++
+	}
 	var out []*Tree
 	if s.regMatched() {
-		out = getLens(l.child, s)
+		out = getLens(l.child, s, true)
 	}
-	s.nreg--
+	if wrapped {
+		s.nreg--
+	}
 	return out
 }
 
@@ -271,7 +292,7 @@ func getSquare(l *Lens, s *getState) []*Tree {
 	}
 	s.regs = regs
 	s.nreg = 0
-	out := getLens(concat, s)
+	out := getLens(concat, s, true)
 
 	// left component is the first child of the concat (nreg = 1)
 	s.nreg = 1
@@ -462,13 +483,13 @@ func (s *recState) parseTerminal(l *Lens, pos int) []recResult {
 		return nil
 	}
 	gs := &getState{text: s.text, regs: regs, nreg: 0, seqs: s.seqs}
-	trees := getLens(l, gs)
+	trees := getLens(l, gs, true)
 	if gs.err != nil {
 		return nil
 	}
 	// Build the skeleton/dictionary for the same span so put can reuse it.
 	ps := &getState{text: s.text, regs: regs, nreg: 0, seqs: map[string]int{}}
-	sk, d := parseLens(l, ps)
+	sk, d := parseLens(l, ps, true)
 	return []recResult{{end: regs[1], trees: trees, key: gs.key, val: gs.val, skel: sk, dict: d}}
 }
 

@@ -84,15 +84,56 @@ func makeRegexpLiteral(text string) *Regexp {
 	return newRegexp(b.String(), false)
 }
 
-func regexpConcatN(rs []*Regexp) *Regexp {
-	present := present(rs)
+// groupOpen returns the RE2 group opener: a capturing "(" when the walker reads
+// this operand's own wrapper, or a non-capturing "(?:" otherwise. Dropping the
+// wrapper for structural operands the get/put register walk never reads shrinks
+// the compiled ctype's capture-register array — the array RE2 memmoves on every
+// NFA transition — without changing the matched language.
+func groupOpen(capture bool) string {
+	if capture {
+		return "("
+	}
+	return "(?:"
+}
+
+// regexpConcatN concatenates operands with every wrapper capturing (used for
+// atype construction and plain regexp values, whose internal groups are never
+// individually indexed by a lens walker).
+func regexpConcatN(rs []*Regexp) *Regexp { return regexpConcatCap(rs, nil) }
+
+// regexpUnionN unions operands with every branch capturing.
+func regexpUnionN(rs []*Regexp) *Regexp { return regexpUnionCap(rs, nil) }
+
+// presentCap filters out nil operands, keeping the capture flags aligned. A nil
+// capture slice means "capture every operand".
+func presentCap(rs []*Regexp, capture []bool) ([]*Regexp, []bool) {
+	outR := rs[:0:0]
+	outC := make([]bool, 0, len(rs))
+	for i, r := range rs {
+		if r == nil {
+			continue
+		}
+		outR = append(outR, r)
+		if capture == nil {
+			outC = append(outC, true)
+		} else {
+			outC = append(outC, capture[i])
+		}
+	}
+	return outR, outC
+}
+
+// regexpConcatCap concatenates operands, wrapping operand i in a capturing group
+// when capture[i] (nil => all capturing) and a non-capturing group otherwise.
+func regexpConcatCap(rs []*Regexp, capture []bool) *Regexp {
+	present, caps := presentCap(rs, capture)
 	if len(present) == 0 {
 		return nil
 	}
 	if anyRaw(present) {
 		var b strings.Builder
-		for _, r := range present {
-			b.WriteByte('(')
+		for i, r := range present {
+			b.WriteString(groupOpen(caps[i]))
 			b.WriteString(r.re2())
 			b.WriteByte(')')
 		}
@@ -101,8 +142,8 @@ func regexpConcatN(rs []*Regexp) *Regexp {
 	nnocase := countNocase(present)
 	mixed := nnocase > 0 && nnocase < len(present)
 	var b strings.Builder
-	for _, r := range present {
-		b.WriteByte('(')
+	for i, r := range present {
+		b.WriteString(groupOpen(caps[i]))
 		if mixed && r.nocase {
 			b.WriteString(expandNocase(r.pattern))
 		} else {
@@ -113,8 +154,11 @@ func regexpConcatN(rs []*Regexp) *Regexp {
 	return newRegexp(b.String(), nnocase == len(present))
 }
 
-func regexpUnionN(rs []*Regexp) *Regexp {
-	present := present(rs)
+// regexpUnionCap unions operands, wrapping operand i per capture[i] (nil => all
+// capturing). Union branches are normally all capturing so the walker can tell
+// which alternative participated.
+func regexpUnionCap(rs []*Regexp, capture []bool) *Regexp {
+	present, caps := presentCap(rs, capture)
 	if len(present) == 0 {
 		return nil
 	}
@@ -124,7 +168,7 @@ func regexpUnionN(rs []*Regexp) *Regexp {
 			if i > 0 {
 				b.WriteByte('|')
 			}
-			b.WriteByte('(')
+			b.WriteString(groupOpen(caps[i]))
 			b.WriteString(r.re2())
 			b.WriteByte(')')
 		}
@@ -137,7 +181,7 @@ func regexpUnionN(rs []*Regexp) *Regexp {
 		if i > 0 {
 			b.WriteByte('|')
 		}
-		b.WriteByte('(')
+		b.WriteString(groupOpen(caps[i]))
 		if mixed && r.nocase {
 			b.WriteString(expandNocase(r.pattern))
 		} else {
@@ -156,6 +200,10 @@ func regexpIter(r *Regexp, min, max int) *Regexp {
 	if r == nil {
 		return nil
 	}
+	// The iteration wrapper is non-capturing: neither the get walk (getStar) nor
+	// the put walk (splitIter) reads the star's own register — both re-match the
+	// child regexp per repetition — so a capturing group here would only bloat
+	// the register array RE2 copies on every NFA transition.
 	if r.raw || r.nocase {
 		p := r.re2()
 		var s string
@@ -165,11 +213,11 @@ func regexpIter(r *Regexp, min, max int) *Regexp {
 			if min == 1 {
 				q = '+'
 			}
-			s = fmt.Sprintf("(%s)%c", p, q)
+			s = fmt.Sprintf("(?:%s)%c", p, q)
 		case min == max:
-			s = fmt.Sprintf("(%s){%d}", p, min)
+			s = fmt.Sprintf("(?:%s){%d}", p, min)
 		default:
-			s = fmt.Sprintf("(%s){%d,%d}", p, min, max)
+			s = fmt.Sprintf("(?:%s){%d,%d}", p, min, max)
 		}
 		return newRawRegexp(s)
 	}
@@ -181,11 +229,11 @@ func regexpIter(r *Regexp, min, max int) *Regexp {
 		if min == 1 {
 			q = '+'
 		}
-		s = fmt.Sprintf("(%s)%c", p, q)
+		s = fmt.Sprintf("(?:%s)%c", p, q)
 	case min == max:
-		s = fmt.Sprintf("(%s){%d}", p, min)
+		s = fmt.Sprintf("(?:%s){%d}", p, min)
 	default:
-		s = fmt.Sprintf("(%s){%d,%d}", p, min, max)
+		s = fmt.Sprintf("(?:%s){%d,%d}", p, min, max)
 	}
 	return newRegexp(s, r.nocase)
 }
@@ -201,16 +249,6 @@ func regexpMaybe(r *Regexp) *Regexp {
 }
 
 func regexpMakeEmpty() *Regexp { return newRegexp("()", false) }
-
-func present(rs []*Regexp) []*Regexp {
-	out := rs[:0:0]
-	for _, r := range rs {
-		if r != nil {
-			out = append(out, r)
-		}
-	}
-	return out
-}
 
 func countNocase(rs []*Regexp) int {
 	n := 0
