@@ -8,12 +8,14 @@ translate between the tree and concrete file syntax.
 
 ```go
 a := augeas.New()
-lens, _ := augeas.LensByName("Hosts")
+lens, _ := augeas.NewEngine().Lens("Hosts", "lns") // interpreted from the embedded .aug corpus
 _ = a.TextStore(lens, "/files/etc/hosts", "127.0.0.1 localhost\n")
 
 v, _ := a.Get("/files/etc/hosts/1/canonical") // "localhost"
 _ = a.Set("/files/etc/hosts/1/alias", "loopback")
-out, _ := a.TextRetrieve(lens, "/files/etc/hosts", nil)
+// NOTE: TextRetrieve/Save need Lens.Build, which is not yet wired up for
+// interpreted lenses (see "Deferred" below) — this call returns an error today.
+_, err := a.TextRetrieve(lens, "/files/etc/hosts", nil)
 ```
 
 The adapter [`github.com/go-ruby-augeas/augeas`](https://github.com/go-ruby-augeas/augeas)
@@ -49,25 +51,28 @@ recorded under `/augeas/files/<name>/error` (reachable via `/augeas//error`).
 Subpaths inside predicates are simple relative paths (labels, `*`, `.`,
 slash-separated); they do not themselves take predicates.
 
-## Built-in lenses
+## The `Lens` seam
 
-Registered by name, each round-trips a canonical, newline-terminated text form:
-
-| Name | File | Notes |
-|------|------|-------|
-| `Hosts` | `/etc/hosts` | numbered entries with `ipaddr`, `canonical`, `alias`, inline `#comment` |
-| `Fstab` | `/etc/fstab` | `spec`/`file`/`vfstype`/`opt`*/`dump`/`passno`; dump & passno optional |
-| `Shellvars`, `Simplevars` | `KEY=value` | one key per node, `#` comments |
-| `Ini`, `Keyvalue` | INI | `[section]` grouping, top-level keys, `#`/`;` comments |
+`Register`/`LensByName` are a pluggable extension point: a hand-written Go type
+implementing `Lens` (`Parse`/`Build`) can be registered under a name and looked
+up later, for a caller who wants a lens with full get **and** put round-trip
+control outside the interpreted corpus below. No lens ships pre-registered —
+see the next section for what actually ships.
 
 ## Embedded lens corpus and go-augeas-original lenses
 
-Beyond the hand-written Go lenses above, the repository embeds the upstream
-Augeas **1.14.1** lens corpus as verbatim `.aug` DSL sources under
-`lenses/dist/` (LGPL v2+, see `lenses/dist/NOTICE`) and interprets them with a
-pure-Go engine (`NewEngine().Lens("Hosts", "lns")`). That corpus is a faithful
-mirror and is never edited; it is gated in CI by Augeas' own `test` assertions
-(`TestCorpus`: get 1533/1533, put 258/258).
+This is what actually ships: the repository embeds the upstream Augeas
+**1.14.1** lens corpus — all 232 modules — as verbatim `.aug` DSL sources
+under `lenses/dist/` (LGPL v2+, see `lenses/dist/NOTICE`) and interprets them
+with a from-scratch, pure-Go `.aug` DSL interpreter (`internal/interp`),
+reachable as a `Lens` via `NewEngine().Lens("Hosts", "lns")`. That corpus is a
+faithful mirror and is never edited; it is gated in CI by Augeas' own `test`
+assertions (`TestCorpus`: get 1533/1533, put 258/258 — 1791/1791 overall,
+100%). **Those get/put counts validate the interpreter itself** (via the
+package-internal `LnsGet`/`LnsPut`); the public `Engine.Lens(...)` adapter
+currently only wires up `Parse` (get) — see "Deferred" below for why `Build`
+(put), and therefore `TextRetrieve`/`Save`, do not yet work on lenses obtained
+this way.
 
 Alongside it, `lenses/contrib/` holds **go-augeas-original lenses** — lenses we
 wrote for formats upstream 1.14.1 does not cover. They live in a separate embed
@@ -148,14 +153,18 @@ save/put is buggy (hercules-team/augeas issues #715, #699).
 
 ## Deferred (not yet implemented — honest scope)
 
-This is a faithful **starter** engine, not a drop-in replacement for upstream
-Augeas. Known gaps:
+This is a faithful engine, not a drop-in replacement for upstream Augeas.
+Known gaps:
 
-- **Lens catalogue**: upstream ships ~200 lenses; this repo ships 4. Additional
-  lenses are a follow-on.
-- **The Augeas lens DSL** (`.aug` regular-language definitions) is *not*
-  interpreted; lenses here are hand-written Go implementing the `Lens`
-  interface.
+- **Public put (`Build`/`TextRetrieve`/`Save`) for interpreted lenses.** The
+  `.aug` DSL interpreter itself implements both directions and is verified
+  correct — `TestCorpus`/`TestContribCorpus` exercise the corpus's own inline
+  `put` assertions at 100% — but the `Lens` adapter `Engine.Lens(...)` returns
+  only wires up `Parse`; its `Build` always returns an error. Until that
+  adapter is finished, round-tripping a file through the embedded corpus (or
+  contrib lenses) is read-only via the public API; a caller who needs full
+  get+put today must implement `Lens` by hand and `Register` it (see "The
+  `Lens` seam" above).
 - **Span tracking**: `Span` always returns `ErrSpanUnsupported` — byte offsets
   are not retained when a lens parses text.
 - **Path language**: node-set functions beyond `last()` (e.g. `count()`,
