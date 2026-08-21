@@ -72,6 +72,15 @@ func NewEngine() *Engine {
 type interpLens struct {
 	lens *interp.Lens
 	name string
+
+	// mu guards skeleton, which Parse records and Build consumes.
+	mu sync.Mutex
+	// skeleton is the text the most recent Parse read. Augeas put reuses the
+	// original text wherever the tree is unchanged, which is what preserves a
+	// file's existing spacing and comments; without it put still succeeds but
+	// emits the lens' canonical form, so "127.0.0.1 localhost" comes back as
+	// "127.0.0.1\tlocalhost".
+	skeleton string
 }
 
 // caddyfileHeredocRe matches a Caddyfile heredoc opener: an argument token
@@ -181,6 +190,9 @@ func (l *interpLens) Parse(text string) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	l.mu.Lock()
+	l.skeleton = text
+	l.mu.Unlock()
 	root := &Node{Label: "/"}
 	for _, t := range forest {
 		root.appendChild(fromInterpTree(t))
@@ -188,10 +200,53 @@ func (l *interpLens) Parse(text string) (*Node, error) {
 	return root, nil
 }
 
-// Build is not implemented: the put (tree->text) direction of interpreted
-// lenses is a documented deferred feature.
+// Build serialises root back to text with this lens.
+//
+// It reuses the text the most recent Parse read as the put skeleton, which is
+// how Augeas preserves the parts of a file the tree did not change -- spacing,
+// comments, the separator a line happened to use. With no prior Parse (a tree
+// built from nothing) put still runs and emits the lens' canonical form.
 func (l *interpLens) Build(root *Node) (string, error) {
-	return "", fmt.Errorf("augeas: put/Build is not implemented for interpreted lens %q", l.name)
+	var forest []*interp.Tree
+	if root != nil {
+		for _, c := range root.Children {
+			// A nil child is skipped, not forwarded: a nil *interp.Tree in the
+			// forest dereferences inside the interpreter.
+			if t := toInterpTree(c); t != nil {
+				forest = append(forest, t)
+			}
+		}
+	}
+	l.mu.Lock()
+	skeleton := l.skeleton
+	l.mu.Unlock()
+	out, err := interp.Put(l.lens, forest, skeleton)
+	if err != nil {
+		return "", fmt.Errorf("augeas: put with lens %q: %w", l.name, err)
+	}
+	return out, nil
+}
+
+// toInterpTree is the inverse of fromInterpTree.
+func toInterpTree(n *Node) *interp.Tree {
+	if n == nil {
+		return nil
+	}
+	t := &interp.Tree{}
+	if n.Label != "" {
+		label := n.Label
+		t.Label = &label
+	}
+	if n.Value != nil {
+		value := *n.Value
+		t.Value = &value
+	}
+	for _, c := range n.Children {
+		if ct := toInterpTree(c); ct != nil {
+			t.Children = append(t.Children, ct)
+		}
+	}
+	return t
 }
 
 func fromInterpTree(t *interp.Tree) *Node {

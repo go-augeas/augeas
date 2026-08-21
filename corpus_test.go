@@ -6,6 +6,7 @@ package augeas
 
 import (
 	"io/fs"
+	"strings"
 	"testing"
 
 	"github.com/go-augeas/augeas/internal/interp"
@@ -17,11 +18,19 @@ func TestEngineLens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lens: %v", err)
 	}
-	if _, err := l.Parse("127.0.0.1 localhost\n"); err != nil {
+	const src = "127.0.0.1 localhost\n"
+	root, err := l.Parse(src)
+	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := l.Build(&Node{}); err == nil {
-		t.Fatal("Build must be unsupported")
+	// Build used to be unsupported for interpreted lenses. It now round-trips
+	// through the skeleton Parse recorded, so the original spacing survives.
+	out, err := l.Build(root)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if out != src {
+		t.Fatalf("round trip = %q, want %q", out, src)
 	}
 	if _, err := e.Lens("Nope", "lns"); err == nil {
 		t.Fatal("missing module")
@@ -199,3 +208,51 @@ func TestNftablesLineWrapGuard(t *testing.T) {
 		t.Fatal("a line continuing a brace group with a stray } must be rejected")
 	}
 }
+
+// TestBuildSurface covers what the round trip in TestEngineLens does not: a
+// tree the lens cannot serialise, a nil child, and a nil root.
+func TestBuildSurface(t *testing.T) {
+	e := NewEngine()
+	l, err := e.Lens("Hosts", "lns")
+	if err != nil {
+		t.Fatalf("lens: %v", err)
+	}
+
+	// A record with no children does not match the lens schema. put must fail,
+	// and the error must name the lens rather than surfacing a bare
+	// interpreter message.
+	bad := &Node{Label: "/"}
+	bad.appendChild(&Node{Label: "1"})
+	_, err = l.Build(bad)
+	if err == nil {
+		t.Fatal("Build of a tree that does not match the schema must fail")
+	}
+	if !strings.Contains(err.Error(), `Hosts.lns`) {
+		t.Errorf("error should name the lens, got %v", err)
+	}
+
+	// A nil child is skipped rather than forwarded: a nil *interp.Tree in the
+	// forest dereferences inside the interpreter.
+	if _, err := l.Build(&Node{Label: "/", Children: []*Node{nil}}); err != nil {
+		t.Errorf("nil child: %v", err)
+	}
+
+	// A nil root puts an empty forest.
+	if _, err := l.Build(nil); err != nil {
+		t.Errorf("nil root: %v", err)
+	}
+
+	// A child carrying a value exercises the value branch of toInterpTree.
+	withVal := &Node{Label: "/"}
+	rec := &Node{Label: "1"}
+	rec.appendChild(&Node{Label: "ipaddr", Value: strPtr("127.0.0.1")})
+	rec.appendChild(&Node{Label: "canonical", Value: strPtr("localhost")})
+	withVal.appendChild(rec)
+	if out, err := l.Build(withVal); err != nil {
+		t.Errorf("build a well-formed record: %v", err)
+	} else if !strings.Contains(out, "127.0.0.1") {
+		t.Errorf("output lost the address: %q", out)
+	}
+}
+
+func strPtr(s string) *string { return &s }
